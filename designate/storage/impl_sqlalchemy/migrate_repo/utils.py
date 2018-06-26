@@ -1,5 +1,3 @@
-# vim: tabstop=4 shiftwidth=4 softtabstop=4
-
 # Copyright 2012 Hewlett-Packard Development Company, L.P.
 # All Rights Reserved.
 #
@@ -29,13 +27,13 @@ LOG = logging.getLogger(__name__)
 
 def create_tables(tables):
     for table in tables:
-        LOG.debug("Creating table %s" % table)
+        LOG.debug("Creating table %s", table)
         table.create()
 
 
 def drop_tables(tables):
     for table in tables:
-        LOG.debug("Dropping table %s" % table)
+        LOG.debug("Dropping table %s", table)
         table.drop()
 
 

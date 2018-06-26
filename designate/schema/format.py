@@ -18,12 +18,9 @@ import re
 import jsonschema
 from jsonschema import compat
 import netaddr
-from oslo_log import log as logging
 
 
-LOG = logging.getLogger(__name__)
-
-# NOTE(kiall): All of the below regular expressions are termined with
+# NOTE(kiall): All of the below regular expressions are terminated with
 #              "\Z", rather than simply "$" to ensure a string with a
 #              trailing newline is NOT matched. See bug #1471158.
 
@@ -49,7 +46,7 @@ RE_FIP_ID = r'^(?P<region>[A-Za-z0-9\.\-_]{1,100}):' \
             r'(?P<id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-' \
             r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\Z'
 
-RE_SSHFP_FINGERPRINT = r'^[0-9A-Fa-f]{40}\Z'
+RE_SSHFP_FINGERPRINT = r'^([0-9A-Fa-f]{10,40}|[0-9A-Fa-f]{64})\Z'
 
 
 draft3_format_checker = jsonschema.draft3_format_checker

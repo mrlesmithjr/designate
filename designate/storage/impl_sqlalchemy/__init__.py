@@ -24,7 +24,6 @@ from sqlalchemy.sql.expression import or_
 
 from designate import exceptions
 from designate import objects
-from designate.i18n import _LI
 from designate.sqlalchemy import base as sqlalchemy_base
 from designate.storage import base as storage_base
 from designate.storage.impl_sqlalchemy import tables
@@ -34,11 +33,12 @@ LOG = logging.getLogger(__name__)
 
 MAXIMUM_SUBZONE_DEPTH = 128
 
-cfg.CONF.register_group(cfg.OptGroup(
+storage_group = cfg.OptGroup(
     name='storage:sqlalchemy', title="Configuration for SQLAlchemy Storage"
-))
+)
 
-cfg.CONF.register_opts(options.database_opts, group='storage:sqlalchemy')
+cfg.CONF.register_group(storage_group)
+cfg.CONF.register_opts(options.database_opts, group=storage_group)
 
 
 class SQLAlchemyStorage(sqlalchemy_base.SQLAlchemy, storage_base.Storage):
@@ -475,10 +475,10 @@ class SQLAlchemyStorage(sqlalchemy_base.SQLAlchemy, storage_base.Storage):
             limit=limit,
         )
         if not zones:
-            LOG.info(_LI("No zones to be purged"))
+            LOG.info("No zones to be purged")
             return
 
-        LOG.debug(_LI("Purging %d zones"), len(zones))
+        LOG.debug("Purging %d zones", len(zones))
 
         zones_by_id = {z.id: z for z in zones}
 
@@ -491,11 +491,11 @@ class SQLAlchemyStorage(sqlalchemy_base.SQLAlchemy, storage_base.Storage):
                 values(parent_zone_id=surviving_parent_id)
 
             resultproxy = self.session.execute(query)
-            LOG.debug(_LI("%d child zones updated"), resultproxy.rowcount)
+            LOG.debug("%d child zones updated", resultproxy.rowcount)
 
             self.purge_zone(context, zone)
 
-        LOG.info(_LI("Purged %d zones"), len(zones))
+        LOG.info("Purged %d zones", len(zones))
         return len(zones)
 
     def count_zones(self, context, criterion=None):
@@ -601,7 +601,8 @@ class SQLAlchemyStorage(sqlalchemy_base.SQLAlchemy, storage_base.Storage):
 
     # RecordSet Methods
     def _find_recordsets(self, context, criterion, one=False, marker=None,
-                         limit=None, sort_key=None, sort_dir=None):
+                         limit=None, sort_key=None, sort_dir=None,
+                         force_index=False):
 
         # Check to see if the criterion can use the reverse_name column
         criterion = self._rname_check(criterion)
@@ -633,7 +634,8 @@ class SQLAlchemyStorage(sqlalchemy_base.SQLAlchemy, storage_base.Storage):
             tc, recordsets = self._find_recordsets_with_records(
                     context, criterion, tables.zones, tables.recordsets,
                     tables.records, limit=limit, marker=marker,
-                    sort_key=sort_key, sort_dir=sort_dir)
+                    sort_key=sort_key, sort_dir=sort_dir,
+                    force_index=force_index)
 
             recordsets.total_count = tc
 
@@ -710,10 +712,10 @@ class SQLAlchemyStorage(sqlalchemy_base.SQLAlchemy, storage_base.Storage):
         return self._find_recordsets(context, {'id': recordset_id}, one=True)
 
     def find_recordsets(self, context, criterion=None, marker=None, limit=None,
-                        sort_key=None, sort_dir=None):
+                        sort_key=None, sort_dir=None, force_index=False):
         return self._find_recordsets(context, criterion, marker=marker,
-                                     limit=limit, sort_key=sort_key,
-                                     sort_dir=sort_dir)
+                                     sort_dir=sort_dir, sort_key=sort_key,
+                                     limit=limit, force_index=force_index)
 
     def find_recordset(self, context, criterion):
         return self._find_recordsets(context, criterion, one=True)

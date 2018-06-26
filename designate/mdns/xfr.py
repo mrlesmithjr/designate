@@ -20,6 +20,7 @@ from oslo_log import log as logging
 from designate import dnsutils
 from designate import exceptions
 from designate.mdns import base
+from designate.metrics import metrics
 
 
 LOG = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class XFRMixin(object):
     """
     Utility mixin that holds common methods for XFR functionality.
     """
+    @metrics.timed('mdns.xfr.zone_sync')
     def zone_sync(self, context, zone, servers=None):
         servers = servers or zone.masters
         servers = servers.to_list()
@@ -38,11 +40,10 @@ class XFRMixin(object):
             dnspython_zone = dnsutils.do_axfr(zone.name, servers,
                                               timeout=timeout)
         except exceptions.XFRFailure as e:
-            LOG.warning(e.message)
+            LOG.warning(e)
             return
 
-        zone = dnsutils.from_dnspython_zone(dnspython_zone)
-        zone.update(zone)
+        zone.update(dnsutils.from_dnspython_zone(dnspython_zone))
 
         zone.transferred_at = timeutils.utcnow()
 

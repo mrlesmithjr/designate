@@ -11,12 +11,10 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-from oslo_log import log as logging
 
 from designate.objects.adapters.api_v2 import base
 from designate import objects
 from designate import exceptions
-LOG = logging.getLogger(__name__)
 
 
 class RecordSetAPIv2Adapter(base.APIv2Adapter):
@@ -104,14 +102,22 @@ class RecordSetAPIv2Adapter(base.APIv2Adapter):
             record_update = True
             del new_recordset['records']
 
-        # Remove deleted records if we have provided a records array
         if record_update:
-            recordset.records[:] = [record for record in recordset.records
-                                    if record.data not in records_to_rm]
+            # Build a list of the "new" records
+            new_recordset_records = objects.RecordList()
 
-        # Add new records
-        for record in records_to_add:
-            recordset.records.append(objects.Record(data=record))
+            # Remove deleted records if we have provided a records array
+            if record_update:
+                for record in recordset.records:
+                    if record.data not in records_to_rm:
+                        new_recordset_records.append(record)
+
+            # Add new records
+            for record in records_to_add:
+                new_recordset_records.append(objects.Record(data=record))
+
+            # Do a single assignment, preserves the object change fields
+            recordset.records = new_recordset_records
 
         return super(RecordSetAPIv2Adapter, cls)._parse_object(
             new_recordset, recordset, *args, **kwargs)

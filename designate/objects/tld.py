@@ -13,26 +13,18 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 from designate.objects import base
+from designate.objects import fields
 
 
+@base.DesignateRegistry.register
 class Tld(base.DictObjectMixin, base.PersistentObjectMixin,
           base.DesignateObject):
-    FIELDS = {
-        'name': {
-            'schema': {
-                'type': 'string',
-                'format': 'tldname',
-                'maxLength': 255,
-            },
-            'immutable': True,
-            'required': True
-        },
-        'description': {
-            'schema': {
-                'type': ['string', 'null'],
-                'maxLength': 160
-            },
-        }
+    def __init__(self, *args, **kwargs):
+        super(Tld, self).__init__(*args, **kwargs)
+
+    fields = {
+        'name': fields.TldField(maxLength=255),
+        'description': fields.StringFields(nullable=True, maxLength=160)
     }
 
     STRING_KEYS = [
@@ -40,5 +32,13 @@ class Tld(base.DictObjectMixin, base.PersistentObjectMixin,
     ]
 
 
+@base.DesignateRegistry.register
 class TldList(base.ListObjectMixin, base.DesignateObject):
     LIST_ITEM_TYPE = Tld
+
+    fields = {
+        'objects': fields.ListOfObjectsField('Tld'),
+    }
+
+    def __contains__(self, key):
+        return bool(list(filter(lambda tld: tld.name == key, self.objects)))

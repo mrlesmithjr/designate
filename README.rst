@@ -1,3 +1,12 @@
+========================
+Team and repository tags
+========================
+
+.. image:: https://governance.openstack.org/badges/designate.svg
+    :target: https://governance.openstack.org/reference/tags/index.html
+
+.. Change things from this point on
+
 ===================
 OpenStack Designate
 ===================
@@ -6,7 +15,7 @@ Designate is an OpenStack project, providing DNSaaS.
 
 IRC: #openstack-dns
 
-Installation: http://docs.openstack.org/developer/designate/getting-started.html
+Installation: https://docs.openstack.org/designate/latest/
 
 
 Development
@@ -19,9 +28,9 @@ Setup
 
 Setup a working environment:
 
-.. code-block:: shell
+.. code-block:: bash
 
-    git clone https://github.com/openstack/designate.git
+    git clone https://git.openstack.org/openstack/designate
     cd designate
     virtualenv .venv
     . .venv/bin/activate
@@ -33,7 +42,7 @@ Building Docs
 
 To build the documentation from the restructured text source, do the following:
 
-.. code-block:: shell
+.. code-block:: bash
 
     cd doc
     pip install -r requirements.txt
@@ -69,7 +78,8 @@ Branch, work, & submit:
 Testing
 -------
 
-Execute a single test using py27 (test is CentralServiceTest.test_count_domains)
+Execute a single test using py27
+(test is CentralServiceTest.test_count_domains)
 
 .. code-block:: shell
 
@@ -78,10 +88,11 @@ Execute a single test using py27 (test is CentralServiceTest.test_count_domains)
 
 
 * Free software: Apache license
-* Documentation: http://docs.openstack.org/developer/designate
-* Source: http://git.openstack.org/cgit/openstack/designate
-* Bugs: http://bugs.launchpad.net/designate
+* Documentation: https://docs.openstack.org/designate/latest/
+* Release notes: https://docs.openstack.org/releasenotes/designate/
+* Source: https://git.openstack.org/cgit/openstack/designate
+* Bugs: https://bugs.launchpad.net/designate
 
 
-.. _OpenStack Gerrit Workflow: http://docs.openstack.org/infra/manual/developers.html#development-workflow
-.. _docs.openstack.org: http://docs.openstack.org/developer/designate
+.. _OpenStack Gerrit Workflow: https://docs.openstack.org/infra/manual/developers.html#development-workflow
+.. _docs.openstack.org: https://docs.openstack.org/designate/latest/

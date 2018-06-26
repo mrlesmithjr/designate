@@ -18,7 +18,6 @@ import json
 import functools
 import inspect
 import os
-import uuid
 import socket
 
 import six
@@ -28,28 +27,28 @@ from oslo_config import cfg
 from oslo_concurrency import processutils
 from oslo_log import log as logging
 from oslo_utils import timeutils
+from oslo_utils import uuidutils
 from oslo_utils.netutils import is_valid_ipv6
 
 from designate.common import config
 from designate import exceptions
 from designate.i18n import _
-from designate.i18n import _LI
-
 
 LOG = logging.getLogger(__name__)
 
 
-cfg.CONF.register_opts([
+helper_opts = [
     cfg.StrOpt('root-helper',
-               default='sudo designate-rootwrap /etc/designate/rootwrap.conf')
-])
+               default='sudo designate-rootwrap /etc/designate/rootwrap.conf',
+               help='designate-rootwrap configuration')
+]
 
 
 # Set some proxy options (Used for clients that need to communicate via a
 # proxy)
-cfg.CONF.register_group(cfg.OptGroup(
+proxy_group = cfg.OptGroup(
     name='proxy', title="Configuration for Client Proxy"
-))
+)
 
 proxy_opts = [
     cfg.StrOpt('http_proxy',
@@ -60,7 +59,10 @@ proxy_opts = [
                 help='These addresses should not be proxied')
 ]
 
-cfg.CONF.register_opts(proxy_opts, group='proxy')
+
+cfg.CONF.register_opts(helper_opts)
+cfg.CONF.register_group(proxy_group)
+cfg.CONF.register_opts(proxy_opts, proxy_group)
 
 # Default TCP/UDP ports
 
@@ -119,8 +121,9 @@ def register_plugin_opts():
     # Avoid circular dependency imports
     from designate import plugin
 
-    plugin.Plugin.register_cfg_opts('designate.zone_manager_tasks')
-    plugin.Plugin.register_extra_cfg_opts('designate.zone_manager_tasks')
+    # Register Producer Tasks
+    plugin.Plugin.register_cfg_opts('designate.producer_tasks')
+    plugin.Plugin.register_extra_cfg_opts('designate.producer_tasks')
 
     # Register Backend Plugin Config Options
     plugin.Plugin.register_cfg_opts('designate.backend')
@@ -301,7 +304,7 @@ def deep_dict_merge(a, b):
 
 
 def generate_uuid():
-    return str(uuid.uuid4())
+    return uuidutils.generate_uuid(dashed=True)
 
 
 def is_uuid_like(val):
@@ -311,10 +314,7 @@ def is_uuid_like(val):
     aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
 
     """
-    try:
-        return str(uuid.UUID(val)) == val
-    except (TypeError, ValueError, AttributeError):
-        return False
+    return uuidutils.is_uuid_like(val)
 
 
 def validate_uuid(*check):
@@ -415,7 +415,7 @@ def split_host_port(string, default_port=53):
     return (host, port)
 
 
-def get_paging_params(params, sort_keys):
+def get_paging_params(context, params, sort_keys):
     """
     Extract any paging parameters
     """
@@ -459,6 +459,8 @@ def get_paging_params(params, sort_keys):
     elif sort_key and sort_key not in sort_keys:
         msg = 'sort key must be one of %(keys)s' % {'keys': sort_keys}
         raise exceptions.InvalidSortKey(msg)
+    elif sort_key == 'tenant_id' and not context.all_tenants:
+        sort_key = None
 
     return marker, limit, sort_key, sort_dir
 
@@ -477,7 +479,7 @@ def bind_tcp(host, port, tcp_backlog, tcp_keepidle=None):
     :type tcp_keepidle: int
     :returns: socket
     """
-    LOG.info(_LI('Opening TCP Listening Socket on %(host)s:%(port)d'),
+    LOG.info('Opening TCP Listening Socket on %(host)s:%(port)d',
              {'host': host, 'port': port})
     family = socket.AF_INET6 if is_valid_ipv6(host) else socket.AF_INET
     sock_tcp = socket.socket(family, socket.SOCK_STREAM)
@@ -488,7 +490,7 @@ def bind_tcp(host, port, tcp_backlog, tcp_keepidle=None):
     try:
         sock_tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
     except Exception:
-        LOG.info(_LI('SO_REUSEPORT not available, ignoring.'))
+        LOG.info('SO_REUSEPORT not available, ignoring.')
 
     # This option isn't available in the OS X version of eventlet
     if tcp_keepidle and hasattr(socket, 'TCP_KEEPIDLE'):
@@ -500,7 +502,7 @@ def bind_tcp(host, port, tcp_backlog, tcp_keepidle=None):
     sock_tcp.bind((host, port))
     if port == 0:
         newport = sock_tcp.getsockname()[1]
-        LOG.info(_LI('Listening on TCP port %(port)d'), {'port': newport})
+        LOG.info('Listening on TCP port %(port)d'), {'port': newport}
 
     sock_tcp.listen(tcp_backlog)
 
@@ -517,7 +519,7 @@ def bind_udp(host, port):
     :type port: int
     :returns: socket
     """
-    LOG.info(_LI('Opening UDP Listening Socket on %(host)s:%(port)d'),
+    LOG.info('Opening UDP Listening Socket on %(host)s:%(port)d',
              {'host': host, 'port': port})
     family = socket.AF_INET6 if is_valid_ipv6(host) else socket.AF_INET
     sock_udp = socket.socket(family, socket.SOCK_DGRAM)
@@ -527,12 +529,16 @@ def bind_udp(host, port):
     try:
         sock_udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
     except Exception:
-        LOG.info(_LI('SO_REUSEPORT not available, ignoring.'))
+        LOG.info('SO_REUSEPORT not available, ignoring.')
 
     sock_udp.setblocking(True)
     sock_udp.bind((host, port))
     if port == 0:
         newport = sock_udp.getsockname()[1]
-        LOG.info(_LI('Listening on UDP port %(port)d'), {'port': newport})
+        LOG.info('Listening on UDP port %(port)d', {'port': newport})
 
     return sock_udp
+
+
+def max_prop_time(timeout, max_retries, retry_interval, delay):
+    return timeout * max_retries + max_retries * retry_interval + delay

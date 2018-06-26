@@ -13,6 +13,8 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations
 # under the License.
+import sys
+
 import yaml
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -20,8 +22,6 @@ import oslo_messaging as messaging
 
 from designate import exceptions
 from designate import rpc
-from designate.i18n import _LI
-from designate.i18n import _LC
 from designate import objects
 from designate.central import rpcapi as central_rpcapi
 from designate.manage import base
@@ -36,18 +36,24 @@ CONF = cfg.CONF
 class PoolCommands(base.Commands):
     def __init__(self):
         super(PoolCommands, self).__init__()
+
+    # NOTE(jh): Cannot do this earlier because we are still missing the config
+    # at that point, see bug #1651576
+    def _startup(self):
         rpc.init(cfg.CONF)
         self.central_api = central_rpcapi.CentralAPI()
 
     @base.args('--file', help='The path to the file the yaml output should be '
-               'writen to',
+               'written to',
                default='/etc/designate/pools.yaml')
     def generate_file(self, file):
+        self._startup()
         try:
             pools = self.central_api.find_pools(self.context)
         except messaging.exceptions.MessagingTimeout:
-            LOG.critical(_LC("No response received from designate-central. "
-                             "Check it is running, and retry"))
+            LOG.critical("No response received from designate-central. "
+                         "Check it is running, and retry")
+            sys.exit(1)
         with open(file, 'w') as stream:
             yaml.dump(
                 DesignateAdapter.render('YAML', pools),
@@ -59,11 +65,13 @@ class PoolCommands(base.Commands):
                'writen to',
                default='/etc/designate/pools.yaml')
     def export_from_config(self, file):
+        self._startup()
         try:
             pools = self.central_api.find_pools(self.context)
         except messaging.exceptions.MessagingTimeout:
-            LOG.critical(_LC("No response received from designate-central. "
-                             "Check it is running, and retry"))
+            LOG.critical("No response received from designate-central. "
+                         "Check it is running, and retry")
+            sys.exit(1)
         r_pools = objects.PoolList()
         for pool in pools:
             r_pool = objects.Pool.from_config(CONF, pool.id)
@@ -81,6 +89,7 @@ class PoolCommands(base.Commands):
     @base.args('--pool_id', help='ID of the pool to be examined',
                default=CONF['service:central'].default_pool_id)
     def show_config(self, pool_id):
+        self._startup()
         try:
             pool = self.central_api.find_pool(self.context, {"id": pool_id})
 
@@ -91,8 +100,9 @@ class PoolCommands(base.Commands):
                   default_flow_style=False))
 
         except messaging.exceptions.MessagingTimeout:
-            LOG.critical(_LC("No response received from designate-central. "
-                             "Check it is running, and retry"))
+            LOG.critical("No response received from designate-central. "
+                         "Check it is running, and retry")
+            sys.exit(1)
 
     @base.args('--file', help='The path to the yaml file describing the pools',
                default='/etc/designate/pools.yaml')
@@ -106,9 +116,9 @@ class PoolCommands(base.Commands):
         help='This will simulate what will happen when you run this command',
         default=False)
     def update(self, file, delete, dry_run):
+        self._startup()
         print('Updating Pools Configuration')
         print('****************************')
-
         output_msg = ['']
 
         with open(file, 'r') as stream:
@@ -125,18 +135,28 @@ class PoolCommands(base.Commands):
                         pool = self.central_api.get_pool(
                             self.context, xpool['id'])
                     except Exception:
-                        LOG.critical(
-                            _LC("Bad ID Supplied for pool %s"), xpool['name'])
+                        LOG.critical("Bad ID Supplied for pool %s",
+                                     xpool['name'])
                         continue
                 else:
                     pool = self.central_api.find_pool(
                         self.context, {"name": xpool['name']})
 
-                LOG.info(_LI('Updating existing pool: %s'), pool)
+                LOG.info('Updating existing pool: %s', pool)
 
                 # TODO(kiall): Move the below into the pool object
 
                 pool = DesignateAdapter.parse('YAML', xpool, pool)
+
+                # TODO(graham): We should be doing a full validation, but right
+                # now there is quirks validating through nested objects.
+
+                for ns_record in pool.ns_records:
+                    try:
+                        ns_record.validate()
+                    except exceptions.InvalidObject as e:
+                        LOG.error(e.errors.to_list()[0]['message'])
+                        sys.exit(1)
 
                 if dry_run:
                     output_msg.append("Update Pool: %s" % pool)
@@ -145,15 +165,21 @@ class PoolCommands(base.Commands):
 
             except exceptions.PoolNotFound:
                 pool = DesignateAdapter.parse('YAML', xpool, objects.Pool())
-                # pool = objects.Pool.from_dict(xpool)
+                for ns_record in pool.ns_records:
+                    try:
+                        ns_record.validate()
+                    except exceptions.InvalidObject as e:
+                        LOG.error(e.errors.to_list()[0]['message'])
+                        sys.exit(1)
                 if dry_run:
                     output_msg.append("Create Pool: %s" % pool)
                 else:
-                    LOG.info(_LI('Creating new pool: %s'), pool)
+                    LOG.info('Creating new pool: %s', pool)
                     self.central_api.create_pool(self.context, pool)
             except messaging.exceptions.MessagingTimeout:
-                LOG.critical(_LC("No response received from designate-central."
-                                 " Check it is running, and retry"))
+                LOG.critical("No response received from designate-central. "
+                             "Check it is running, and retry")
+                sys.exit(1)
 
         if delete:
             pools = self.central_api.find_pools(self.context)
@@ -172,13 +198,14 @@ class PoolCommands(base.Commands):
                         output_msg.append("Delete Pool: %s" % p)
 
                     else:
-                        LOG.info(_LI('Deleting %s'), p)
+                        LOG.info('Deleting %s', p)
                         self.central_api.delete_pool(self.context, p.id)
 
                 except messaging.exceptions.MessagingTimeout:
-                    LOG.critical(_LC("No response received from "
-                                     "designate-central. "
-                                     "Check it is running, and retry"))
+                    LOG.critical(
+                        "No response received from designate-central. "
+                        "Check it is running, and retry")
+                    sys.exit(1)
 
         for line in output_msg:
             print(line)

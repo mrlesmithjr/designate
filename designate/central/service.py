@@ -23,6 +23,7 @@ import itertools
 import string
 import signal
 import random
+from random import SystemRandom
 import time
 
 import six
@@ -34,14 +35,11 @@ import oslo_messaging as messaging
 from oslo_log import log as logging
 from oslo_concurrency import lockutils
 
-from designate.i18n import _LI
-from designate.i18n import _LC
-from designate.i18n import _LE
-from designate.i18n import _LW
 from designate import context as dcontext
 from designate import exceptions
 from designate import dnsutils
 from designate import network_api
+from designate import notifications
 from designate import objects
 from designate import policy
 from designate import quota
@@ -52,7 +50,7 @@ from designate import storage
 from designate.mdns import rpcapi as mdns_rpcapi
 from designate.pool_manager import rpcapi as pool_manager_rpcapi
 from designate.storage import transaction
-from designate.zone_manager import rpcapi as zone_manager_rpcapi
+from designate.worker import rpcapi as worker_rpcapi
 
 
 LOG = logging.getLogger(__name__)
@@ -157,11 +155,17 @@ def notification(notification_type):
                 # Call the wrapped function
                 result = f(self, *args, **kwargs)
 
+                # Feed the args/result to a notification plugin
+                # to determine what is emitted
+                payloads = notifications.get_plugin().emit(
+                    notification_type, context, result, args, kwargs)
+
                 # Enqueue the notification
-                LOG.debug('Queueing notification for %(type)s ',
-                          {'type': notification_type})
-                NOTIFICATION_BUFFER.queue.appendleft(
-                    (context, notification_type, result,))
+                for payload in payloads:
+                    LOG.debug('Queueing notification for %(type)s ',
+                              {'type': notification_type})
+                    NOTIFICATION_BUFFER.queue.appendleft(
+                        (context, notification_type, payload,))
 
                 return result
 
@@ -185,7 +189,7 @@ def notification(notification_type):
 
 
 class Service(service.RPCService, service.Service):
-    RPC_API_VERSION = '6.1'
+    RPC_API_VERSION = '6.2'
 
     target = messaging.Target(version=RPC_API_VERSION)
 
@@ -222,22 +226,14 @@ class Service(service.RPCService, service.Service):
 
     @property
     def service_name(self):
-        return 'central'
+        return cfg.CONF['service:central'].central_topic
 
     def start(self):
-        # Check to see if there are any TLDs in the database
-        tlds = self.storage.find_tlds({})
-        if tlds:
-            self.check_for_tlds = True
-            LOG.info(_LI("Checking for TLDs"))
-        else:
-            self.check_for_tlds = False
-            LOG.info(_LI("NOT checking for TLDs"))
 
         if (cfg.CONF['service:central'].managed_resource_tenant_id ==
                 "00000000-0000-0000-0000-000000000000"):
-            msg = _LW("Managed Resource Tenant ID is not properly configured")
-            LOG.warning(msg)
+            LOG.warning("Managed Resource Tenant ID is not properly "
+                        "configured")
 
         super(Service, self).start()
 
@@ -253,11 +249,21 @@ class Service(service.RPCService, service.Service):
         return pool_manager_rpcapi.PoolManagerAPI.get_instance()
 
     @property
-    def zone_manager_api(self):
-        return zone_manager_rpcapi.ZoneManagerAPI.get_instance()
+    def worker_api(self):
+        return worker_rpcapi.WorkerAPI.get_instance()
+
+    @property
+    def zone_api(self):
+        # TODO(timsim): Remove this when pool_manager_api is gone
+        if cfg.CONF['service:worker'].enabled:
+                return self.worker_api
+        return self.pool_manager_api
 
     def _is_valid_zone_name(self, context, zone_name):
         # Validate zone name length
+        if zone_name is None:
+            raise exceptions.InvalidObject
+
         if len(zone_name) > cfg.CONF['service:central'].max_zone_name_len:
             raise exceptions.InvalidZoneName('Name too long')
 
@@ -269,11 +275,17 @@ class Service(service.RPCService, service.Service):
             raise exceptions.InvalidZoneName('More than one label is '
                                              'required')
 
-        # Check the TLD for validity if there are entries in the database
-        if self.check_for_tlds:
-            try:
-                self.storage.find_tld(context, {'name': zone_labels[-1]})
-            except exceptions.TldNotFound:
+        tlds = self.storage.find_tlds(context)
+        if tlds:
+            LOG.debug("Checking if %s has a valid TLD", zone_name)
+            allowed = False
+            for i in range(-len(zone_labels), 0):
+                last_i_labels = zone_labels[i:]
+                LOG.debug("Checking %s against the TLD list", last_i_labels)
+                if ".".join(last_i_labels) in tlds:
+                    allowed = True
+                    break
+            if not allowed:
                 raise exceptions.InvalidZoneName('Invalid TLD')
 
             # Now check that the zone name is not the same as a TLD
@@ -283,7 +295,7 @@ class Service(service.RPCService, service.Service):
                     context,
                     {'name': stripped_zone_name})
             except exceptions.TldNotFound:
-                pass
+                LOG.debug("%s has a valid TLD", zone_name)
             else:
                 raise exceptions.InvalidZoneName(
                     'Zone name cannot be the same as a TLD')
@@ -298,6 +310,9 @@ class Service(service.RPCService, service.Service):
         return True
 
     def _is_valid_recordset_name(self, context, zone, recordset_name):
+        if recordset_name is None:
+            raise exceptions.InvalidObject
+
         if not recordset_name.endswith('.'):
             raise ValueError('Please supply a FQDN')
 
@@ -344,8 +359,8 @@ class Service(service.RPCService, service.Service):
         Check that the placement of the requested rrset belongs to any of the
         zones subzones..
         """
-        LOG.debug("Checking if %s belongs in any of %s subzones" %
-                  (recordset_name, zone.name))
+        LOG.debug("Checking if %s belongs in any of %s subzones",
+                  recordset_name, zone.name)
 
         criterion = criterion or {}
 
@@ -372,7 +387,11 @@ class Service(service.RPCService, service.Service):
         Check to make sure that the records in the recordset
         follow the rules, and won't blow up on the nameserver.
         """
-        if hasattr(recordset, 'records'):
+        try:
+            recordset.records
+        except (AttributeError, exceptions.RelationNotLoaded):
+            pass
+        else:
             if len(recordset.records) > 1 and recordset.type == 'CNAME':
                 raise exceptions.BadRequest(
                     'CNAME recordsets may not have more than 1 record'
@@ -403,14 +422,13 @@ class Service(service.RPCService, service.Service):
                     signal.setitimer(signal.ITIMER_REAL, 0)
 
         except Timeout:
-            LOG.critical(_LC(
+            LOG.critical(
                 'Blacklist regex (%(pattern)s) took too long to evaluate '
-                'against zone name (%(zone_name)s') %
-                         {
-                             'pattern': blacklist.pattern,
-                             'zone_name': zone_name
-                         }
-                        )
+                'against zone name (%(zone_name)s',
+                {
+                    'pattern': blacklist.pattern,
+                    'zone_name': zone_name
+                })
 
             return True
 
@@ -459,6 +477,8 @@ class Service(service.RPCService, service.Service):
         return subzones
 
     def _is_valid_ttl(self, context, ttl):
+        if ttl is None:
+            return
         min_ttl = cfg.CONF['service:central'].min_ttl
         if min_ttl is not None and ttl < int(min_ttl):
             try:
@@ -684,8 +704,6 @@ class Service(service.RPCService, service.Service):
         # The TLD is only created on central's storage and not on the backend.
         created_tld = self.storage.create_tld(context, tld)
 
-        # Set check for tlds to be true
-        self.check_for_tlds = True
         return created_tld
 
     def find_tlds(self, context, criterion=None, marker=None, limit=None,
@@ -718,11 +736,6 @@ class Service(service.RPCService, service.Service):
         policy.check('delete_tld', context, {'tld_id': tld_id})
 
         tld = self.storage.delete_tld(context, tld_id)
-
-        # We need to ensure that if there's no more TLD's we'll not break
-        # zone creation.
-        if not self.storage.find_tlds(context, limit=1):
-            self.check_for_tlds = False
 
         return tld
 
@@ -842,8 +855,7 @@ class Service(service.RPCService, service.Service):
         self._is_valid_zone_name(context, zone.name)
 
         # Ensure TTL is above the minimum
-        if zone.ttl is not None:
-            self._is_valid_ttl(context, zone.ttl)
+        self._is_valid_ttl(context, zone.ttl)
 
         # Get a pool id
         zone.pool_id = self.scheduler.schedule_zone(context, zone)
@@ -862,10 +874,10 @@ class Service(service.RPCService, service.Service):
 
         # Handle super-zones appropriately
         subzones = self._is_superzone(context, zone.name, zone.pool_id)
-        msg = 'Unable to create zone because another tenant owns a ' \
-            'subzone of the zone'
+        msg = ('Unable to create zone because another tenant owns a subzone '
+               'of the zone')
         if subzones:
-            LOG.debug("Zone '{0}' is a superzone.".format(zone.name))
+            LOG.debug("Zone '%s' is a superzone.", zone.name)
             for subzone in subzones:
                 if subzone.tenant_id != zone.tenant_id:
                     raise exceptions.IllegalParentZone(msg)
@@ -879,8 +891,8 @@ class Service(service.RPCService, service.Service):
 
         pool_ns_records = self._get_pool_ns_records(context, zone.pool_id)
         if len(pool_ns_records) == 0:
-            LOG.critical(_LC('No nameservers configured. '
-                             'Please create at least one nameserver'))
+            LOG.critical('No nameservers configured. Please create at least '
+                         'one nameserver')
             raise exceptions.NoServersConfigured()
 
         # End of pre-flight checks, create zone
@@ -898,7 +910,7 @@ class Service(service.RPCService, service.Service):
 
         zone = self._create_zone_in_storage(context, zone)
 
-        self.pool_manager_api.create_zone(context, zone)
+        self.zone_api.create_zone(context, zone)
 
         if zone.type == 'SECONDARY':
             self.mdns_api.perform_zone_xfr(context, zone)
@@ -906,9 +918,8 @@ class Service(service.RPCService, service.Service):
         # If zone is a superzone, update subzones
         # with new parent IDs
         for subzone in subzones:
-            LOG.debug("Updating subzone '{0}' parent ID "
-                      "using superzone ID '{1}'"
-                      .format(subzone.name, zone.id))
+            LOG.debug("Updating subzone '%s' parent ID using "
+                      "superzone ID '%s'", subzone.name, zone.id)
             subzone.parent_zone_id = zone.id
             self.update_zone(context, subzone)
 
@@ -1022,9 +1033,8 @@ class Service(service.RPCService, service.Service):
             raise exceptions.BadRequest('Renaming a zone is not allowed')
 
         # Ensure TTL is above the minimum
-        ttl = changes.get('ttl', None)
-        if ttl is not None:
-            self._is_valid_ttl(context, ttl)
+        ttl = changes.get('ttl')
+        self._is_valid_ttl(context, ttl)
 
         return self._update_zone(context, zone, increment_serial, changes)
 
@@ -1038,7 +1048,7 @@ class Service(service.RPCService, service.Service):
         if 'masters' in changes:
             self.mdns_api.perform_zone_xfr(context, zone)
 
-        self.pool_manager_api.update_zone(context, zone)
+        self.zone_api.update_zone(context, zone)
 
         return zone
 
@@ -1089,11 +1099,11 @@ class Service(service.RPCService, service.Service):
                                             'before deleting this zone')
 
         if hasattr(context, 'abandon') and context.abandon:
-            LOG.info(_LW("Abandoning zone '%(zone)s'"), {'zone': zone.name})
+            LOG.info("Abandoning zone '%(zone)s'", {'zone': zone.name})
             zone = self.storage.delete_zone(context, zone.id)
         else:
             zone = self._delete_zone_in_storage(context, zone)
-            self.pool_manager_api.delete_zone(context, zone)
+            self.zone_api.delete_zone(context, zone)
 
         return zone
 
@@ -1117,8 +1127,8 @@ class Service(service.RPCService, service.Service):
 
         policy.check('purge_zones', context, criterion)
 
-        LOG.debug("Performing purge with limit of %r and criterion of %r"
-                  % (limit, criterion))
+        LOG.debug("Performing purge with limit of %r and criterion of %r",
+                  limit, criterion)
 
         return self.storage.purge_zones(context, criterion, limit)
 
@@ -1145,11 +1155,9 @@ class Service(service.RPCService, service.Service):
 
         # Perform XFR if serial's are not equal
         if serial > zone.serial:
-            msg = _LI(
-                "Serial %(srv_serial)d is not equal to zone's %(serial)d,"
-                " performing AXFR")
-            LOG.info(
-                msg, {"srv_serial": serial, "serial": zone.serial})
+            LOG.info("Serial %(srv_serial)d is not equal to zone's "
+                     "%(serial)d, performing AXFR",
+                     {"srv_serial": serial, "serial": zone.serial})
             self.mdns_api.perform_zone_xfr(context, zone)
 
     def count_zones(self, context, criterion=None):
@@ -1208,7 +1216,7 @@ class Service(service.RPCService, service.Service):
 
         self._touch_zone_in_storage(context, zone)
 
-        self.pool_manager_api.update_zone(context, zone)
+        self.zone_api.update_zone(context, zone)
 
         return zone
 
@@ -1243,7 +1251,7 @@ class Service(service.RPCService, service.Service):
         recordset, zone = self._create_recordset_in_storage(
             context, zone, recordset, increment_serial=increment_serial)
 
-        self.pool_manager_api.update_zone(context, zone)
+        self.zone_api.update_zone(context, zone)
 
         recordset.zone_name = zone.name
         recordset.obj_reset_changes(['zone_name'])
@@ -1264,8 +1272,7 @@ class Service(service.RPCService, service.Service):
             changes = recordset.obj_get_changes()
             ttl = changes.get('ttl', None)
 
-        if ttl is not None:
-            self._is_valid_ttl(context, ttl)
+        self._is_valid_ttl(context, ttl)
 
         # Ensure the recordset name and placement is valid
         self._is_valid_recordset_name(context, zone, recordset.name)
@@ -1337,12 +1344,13 @@ class Service(service.RPCService, service.Service):
         return recordset
 
     def find_recordsets(self, context, criterion=None, marker=None, limit=None,
-                        sort_key=None, sort_dir=None):
+                        sort_key=None, sort_dir=None, force_index=False):
         target = {'tenant_id': context.tenant}
         policy.check('find_recordsets', context, target)
 
         recordsets = self.storage.find_recordsets(context, criterion, marker,
-                                                  limit, sort_key, sort_dir)
+                                                  limit, sort_key, sort_dir,
+                                                  force_index)
 
         return recordsets
 
@@ -1405,7 +1413,7 @@ class Service(service.RPCService, service.Service):
         recordset, zone = self._update_recordset_in_storage(
             context, zone, recordset, increment_serial=increment_serial)
 
-        self.pool_manager_api.update_zone(context, zone)
+        self.zone_api.update_zone(context, zone)
 
         return recordset
 
@@ -1468,7 +1476,7 @@ class Service(service.RPCService, service.Service):
         recordset, zone = self._delete_recordset_in_storage(
             context, zone, recordset, increment_serial=increment_serial)
 
-        self.pool_manager_api.update_zone(context, zone)
+        self.zone_api.update_zone(context, zone)
 
         recordset.zone_name = zone.name
         recordset.obj_reset_changes(['zone_name'])
@@ -1536,7 +1544,7 @@ class Service(service.RPCService, service.Service):
             context, zone, recordset, record,
             increment_serial=increment_serial)
 
-        self.pool_manager_api.update_zone(context, zone)
+        self.zone_api.update_zone(context, zone)
 
         return record
 
@@ -1647,7 +1655,7 @@ class Service(service.RPCService, service.Service):
         record, zone = self._update_record_in_storage(
             context, zone, record, increment_serial=increment_serial)
 
-        self.pool_manager_api.update_zone(context, zone)
+        self.zone_api.update_zone(context, zone)
 
         return record
 
@@ -1708,7 +1716,7 @@ class Service(service.RPCService, service.Service):
         record, zone = self._delete_record_in_storage(
             context, zone, record, increment_serial=increment_serial)
 
-        self.pool_manager_api.update_zone(context, zone)
+        self.zone_api.update_zone(context, zone)
 
         return record
 
@@ -1786,7 +1794,7 @@ class Service(service.RPCService, service.Service):
 
         policy.check('diagnostics_sync_record', context, target)
 
-        self.pool_manager_api.update_zone(context, zone)
+        self.zone_api.update_zone(context, zone)
 
     def ping(self, context):
         policy.check('diagnostics_ping', context)
@@ -1917,9 +1925,9 @@ class Service(service.RPCService, service.Service):
                     fip_ptr['ttl'] = zone['ttl']
 
                 fip_ptr['ptrdname'] = record['data']
+                fip_ptr['description'] = record['description']
             else:
-                LOG.debug("No record information found for %s" %
-                          value[0]['id'])
+                LOG.debug("No record information found for %s", value[0]['id'])
 
             # Store the "fip_record" with the region and it's id as key
             fips.append(fip_ptr)
@@ -1972,10 +1980,12 @@ class Service(service.RPCService, service.Service):
 
         tenant_fips = self._list_floatingips(context, region=region)
 
-        self._get_floatingip(context, region, floatingip_id, tenant_fips)
+        fip = self._get_floatingip(context, region, floatingip_id, tenant_fips)
+
+        result = self._list_to_dict([fip], keys=['region', 'id'])
 
         valid, invalid = self._determine_floatingips(
-            elevated_context, tenant_fips)
+            elevated_context, result)
 
         self._invalidate_floatingips(context, invalid)
 
@@ -2000,12 +2010,15 @@ class Service(service.RPCService, service.Service):
             zone = self.storage.find_zone(
                 elevated_context, {'name': zone_name})
         except exceptions.ZoneNotFound:
-            msg = _LI(
-                'Creating zone for %(fip_id)s:%(region)s - '
-                '%(fip_addr)s zone %(zonename)s'), \
-                {'fip_id': floatingip_id, 'region': region,
-                'fip_addr': fip['address'], 'zonename': zone_name}
-            LOG.info(msg)
+            LOG.info(
+                'Creating zone for %(fip_id)s:%(region)s - %(fip_addr)s '
+                'zone %(zonename)s',
+                {
+                    'fip_id': floatingip_id,
+                    'region': region,
+                    'fip_addr': fip['address'],
+                    'zonename': zone_name
+                })
 
             email = cfg.CONF['service:central'].managed_resource_email
             tenant_id = cfg.CONF['service:central'].managed_resource_tenant_id
@@ -2277,7 +2290,7 @@ class Service(service.RPCService, service.Service):
             criterion={'pool_id': pool_id, 'action': '!DELETE'})
 
         # If there are existing zones, do not delete the pool
-        LOG.debug("Zones is None? %r " % zones)
+        LOG.debug("Zones is None? %r", zones)
         if len(zones) == 0:
             pool = self.storage.delete_pool(context, pool_id)
         else:
@@ -2314,12 +2327,12 @@ class Service(service.RPCService, service.Service):
             zone, status, serial)
 
         if zone.status != 'DELETED':
-            LOG.debug('Setting zone %s, serial %s: action %s, status %s'
-                      % (zone.id, zone.serial, zone.action, zone.status))
+            LOG.debug('Setting zone %s, serial %s: action %s, status %s',
+                      zone.id, zone.serial, zone.action, zone.status)
             self.storage.update_zone(context, zone)
 
         if deleted:
-            LOG.debug('update_status: deleting %s' % zone.name)
+            LOG.debug('update_status: deleting %s', zone.name)
             self.storage.delete_zone(context, zone.id)
 
         return zone
@@ -2356,18 +2369,18 @@ class Service(service.RPCService, service.Service):
                 record, status, serial)
 
             if record.obj_what_changed():
-                LOG.debug('Setting record %s, serial %s: action %s, status %s'
-                          % (record.id, record.serial,
-                             record.action, record.status))
+                LOG.debug('Setting record %s, serial %s: action %s, '
+                          'status %s', record.id, record.serial,
+                          record.action, record.status)
                 self.storage.update_record(context, record)
 
             # TODO(Ron): Including this to retain the current logic.
             # We should NOT be deleting records.  The record status should
             # be used to indicate the record has been deleted.
             if deleted:
-                LOG.debug('Deleting record %s, serial %s: action %s, status %s'
-                          % (record.id, record.serial,
-                             record.action, record.status))
+                LOG.debug('Deleting record %s, serial %s: action %s, '
+                          'status %s', record.id, record.serial,
+                          record.action, record.status)
 
                 self.storage.delete_record(context, record.id)
 
@@ -2413,7 +2426,8 @@ class Service(service.RPCService, service.Service):
     # Zone Transfers
     def _transfer_key_generator(self, size=8):
         chars = string.ascii_uppercase + string.digits
-        return ''.join(random.choice(chars) for _ in range(size))
+        sysrand = SystemRandom()
+        return ''.join(sysrand.choice(chars) for _ in range(size))
 
     @notification('dns.zone_transfer_request.create')
     @transaction
@@ -2450,7 +2464,7 @@ class Service(service.RPCService, service.Service):
         zone_transfer_request = self.storage.get_zone_transfer_request(
             elevated_context, zone_transfer_request_id)
 
-        LOG.info(_LI('Target Tenant ID found - using scoped policy'))
+        LOG.info('Target Tenant ID found - using scoped policy')
         target = {
             'target_tenant_id': zone_transfer_request.target_tenant_id,
             'tenant_id': zone_transfer_request.tenant_id,
@@ -2653,14 +2667,17 @@ class Service(service.RPCService, service.Service):
                     request_body,
                     # Don't relativize, or we end up with '@' record names.
                     relativize=False,
-                    # Dont check origin, we allow missing NS records
+                    # Don't check origin, we allow missing NS records
                     # (missing SOA records are taken care of in _create_zone).
                     check_origin=False)
                 zone = dnsutils.from_dnspython_zone(dnspython_zone)
                 zone.type = 'PRIMARY'
 
                 for rrset in list(zone.recordsets):
-                    if rrset.type in ('NS', 'SOA'):
+                    if rrset.type == 'SOA':
+                        zone.recordsets.remove(rrset)
+                    # subdomain NS records should be kept
+                    elif rrset.type == 'NS' and rrset.name == zone.name:
                         zone.recordsets.remove(rrset)
 
             except dnszone.UnknownOrigin:
@@ -2675,9 +2692,9 @@ class Service(service.RPCService, service.Service):
                 zone_import.message = 'An SOA record is required.'
                 zone_import.status = 'ERROR'
             except Exception as e:
-                msg = _LE('An undefined error occurred during zone import')
-                LOG.exception(msg)
-                msg = 'An undefined error occurred. %s' % e.message[:130]
+                LOG.exception('An undefined error occurred during zone import')
+                msg = 'An undefined error occurred. %s'\
+                      % six.text_type(e)[:130]
                 zone_import.message = msg
                 zone_import.status = 'ERROR'
 
@@ -2700,12 +2717,12 @@ class Service(service.RPCService, service.Service):
                 zone_import.message = 'Duplicate zone.'
             except exceptions.InvalidTTL as e:
                 zone_import.status = 'ERROR'
-                zone_import.message = e.message
+                zone_import.message = six.text_type(e)
             except Exception as e:
-                msg = _LE('An undefined error occurred during zone '
-                          'import creation')
-                LOG.exception(msg)
-                msg = 'An undefined error occurred. %s' % e.message[:130]
+                LOG.exception('An undefined error occurred during zone '
+                              'import creation')
+                msg = 'An undefined error occurred. %s'\
+                      % six.text_type(e)[:130]
                 zone_import.message = msg
                 zone_import.status = 'ERROR'
 
@@ -2769,9 +2786,40 @@ class Service(service.RPCService, service.Service):
 
         created_zone_export = self.storage.create_zone_export(context,
                                                               zone_export)
+        if not cfg.CONF['service:worker'].enabled:
+            # So that we can maintain asynch behavior during the time that this
+            # lives in central, we'll return the 'PENDING' object, and then the
+            # 'COMPLETE'/'ERROR' status will be available on the first poll.
+            export = copy.deepcopy(created_zone_export)
 
-        self.zone_manager_api.start_zone_export(context, zone,
-                                                created_zone_export)
+            synchronous = cfg.CONF['service:zone_manager'].export_synchronous
+            criterion = {'zone_id': zone_id}
+            count = self.storage.count_recordsets(context, criterion)
+
+            if synchronous:
+                try:
+                    self.quota.limit_check(
+                            context, context.tenant, api_export_size=count)
+                except exceptions.OverQuota:
+                    LOG.debug('Zone Export too large to perform synchronously')
+                    export.status = 'ERROR'
+                    export.message = 'Zone is too large to export'
+                    return export
+
+                export.location = \
+                    "designate://v2/zones/tasks/exports/%(eid)s/export" % \
+                    {'eid': export.id}
+
+                export.status = 'COMPLETE'
+            else:
+                LOG.debug('No method found to export zone')
+                export.status = 'ERROR'
+                export.message = 'No suitable method for export'
+
+            self.update_zone_export(context, export)
+        else:
+            export = copy.deepcopy(created_zone_export)
+            self.worker_api.start_zone_export(context, zone, export)
 
         return created_zone_export
 
@@ -2846,5 +2894,13 @@ class Service(service.RPCService, service.Service):
 
             return self.storage.update_service_status(context, db_status)
         except exceptions.ServiceStatusNotFound:
+            LOG.info(
+                "Creating new service status entry for %(service_name)s "
+                "at %(hostname)s",
+                {
+                    'service_name': service_status.service_name,
+                    'hostname': service_status.hostname
+                }
+            )
             return self.storage.create_service_status(
                 context, service_status)

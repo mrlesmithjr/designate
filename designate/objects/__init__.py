@@ -13,8 +13,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 from designate.objects.base import DesignateObject  # noqa
-from designate.objects.base import DictObjectMixin  # noqa
 from designate.objects.base import ListObjectMixin  # noqa
+from designate.objects.base import DictObjectMixin  # noqa
 from designate.objects.base import PagedListObjectMixin  # noqa
 from designate.objects.blacklist import Blacklist, BlacklistList  # noqa
 from designate.objects.zone import Zone, ZoneList  # noqa

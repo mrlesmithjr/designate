@@ -13,7 +13,7 @@
 # under the License.
 from oslo_log import log as logging
 
-from designate.scheduler.filters.base import Filter
+from designate.scheduler.filters import base
 from designate import exceptions
 from designate import objects
 from designate import policy
@@ -21,7 +21,7 @@ from designate import policy
 LOG = logging.getLogger(__name__)
 
 
-class PoolIDAttributeFilter(Filter):
+class PoolIDAttributeFilter(base.Filter):
     """This allows users with the correct role to specify the exact pool_id
     to schedule the supplied zone to.
 
@@ -53,7 +53,7 @@ class PoolIDAttributeFilter(Filter):
     """
 
     def filter(self, context, pools, zone):
-        """Attempt to load and set the pool to the one provied in the
+        """Attempt to load and set the pool to the one provided in the
         Zone attributes.
 
         :param context: :class:`designate.context.DesignateContext` - Context

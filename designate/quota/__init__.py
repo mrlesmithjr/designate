@@ -16,12 +16,12 @@
 from oslo_config import cfg
 from oslo_log import log as logging
 
-from designate.quota.base import Quota
+from designate.quota import base
 
 
 LOG = logging.getLogger(__name__)
 
-cfg.CONF.register_opts([
+quota_opts = [
     cfg.StrOpt('quota-driver', default='storage', help='Quota driver to use'),
 
     cfg.IntOpt('quota-zones', default=10,
@@ -34,14 +34,16 @@ cfg.CONF.register_opts([
                help='Number of records allowed per recordset'),
     cfg.IntOpt('quota-api-export-size', default=1000,
                help='Number of recordsets allowed in a zone export'),
-])
+]
+
+cfg.CONF.register_opts(quota_opts)
 
 
 def get_quota():
     quota_driver = cfg.CONF.quota_driver
 
-    LOG.debug("Loading quota driver: %s" % quota_driver)
+    LOG.debug("Loading quota driver: %s", quota_driver)
 
-    cls = Quota.get_driver(quota_driver)
+    cls = base.Quota.get_driver(quota_driver)
 
     return cls()

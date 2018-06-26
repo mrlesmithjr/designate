@@ -45,9 +45,8 @@ from oslo_log import log as logging
 
 from designate import exceptions
 from designate.backend.agent_backend import base
-from designate.i18n import _LI
-from designate.i18n import _LE
 from designate.utils import execute
+
 
 LOG = logging.getLogger(__name__)
 CFG_GROUP = 'backend:agent:knot2'
@@ -58,6 +57,30 @@ KNOTC_DEFAULT_PATH = 'knotc'
 # perfors AXFR from MiniDNS to the Agent to populate the `zone` argument
 # (needed by the Bind backend)
 
+"""GROUP = backend:agent:knot2"""
+knot2_group = cfg.OptGroup(
+            name='backend:agent:knot2', title="Configuration for Knot2 backend"
+        )
+knot2_opts = [
+    cfg.StrOpt('knotc-cmd-name',
+               help='knotc executable path or rootwrap command name',
+               default='knotc'),
+    cfg.StrOpt('query-destination', default='127.0.0.1',
+               help='Host to query when finding zones')
+]
+
+"""GROUP = backend:agent:msdns"""
+msdns_group = cfg.OptGroup(
+    name='backend:agent:msdns',
+    title="Configuration for Microsoft DNS Server"
+)
+msdns_opts = [
+
+]
+
+cfg.CONF.register_group(knot2_group)
+cfg.CONF.register_opts(knot2_opts, group=knot2_group)
+
 
 class Knot2Backend(base.AgentBackend):
     __plugin_name__ = 'knot2'
@@ -66,17 +89,7 @@ class Knot2Backend(base.AgentBackend):
 
     @classmethod
     def get_cfg_opts(cls):
-        group = cfg.OptGroup(
-            name='backend:agent:knot2', title="Configuration for Knot2 backend"
-        )
-        opts = [
-            cfg.StrOpt('knotc-cmd-name',
-                       help='knotc executable path or rootwrap command name',
-                       default=KNOTC_DEFAULT_PATH),
-            cfg.StrOpt('query-destination', default='127.0.0.1',
-                       help='Host to query when finding zones')
-        ]
-        return [(group, opts)]
+        return [(knot2_group, knot2_opts)]
 
     def __init__(self, *a, **kw):
         """Configure the backend"""
@@ -86,7 +99,7 @@ class Knot2Backend(base.AgentBackend):
 
     def start(self):
         """Start the backend"""
-        LOG.info(_LI("Started knot2 backend"))
+        LOG.info("Started knot2 backend")
 
     def _execute_knotc(self, *knotc_args, **kw):
         """Run the Knot client and check the output
@@ -106,17 +119,19 @@ class Knot2Backend(base.AgentBackend):
         try:
             out, err = execute(self._knotc_cmd_name, *knotc_args)
             out = out.rstrip()
-            LOG.debug("Command output: %r" % out)
+            LOG.debug("Command output: %r", out)
             if out != expected:
                 if expected_alt is not None and out == expected_alt:
-                    LOG.info(_LI("Ignoring error: %r"), out)
+                    LOG.info("Ignoring error: %r", out)
                 else:
                     raise ProcessExecutionError(stdout=out, stderr=err)
 
         except ProcessExecutionError as e:
-            LOG.error(_LE("Command output: %(out)r Stderr: %(err)r"), {
-                'out': e.stdout, 'err': e.stderr
-            })
+            LOG.error("Command output: %(out)r Stderr: %(err)r",
+                      {
+                          'out': e.stdout,
+                          'err': e.stderr
+                      })
             raise exceptions.Backend(e)
 
     def _start_minidns_to_knot_axfr(self, zone_name):
@@ -140,7 +155,7 @@ class Knot2Backend(base.AgentBackend):
                 # self._execute_knotc('conf-diff')
             except Exception as e:
                 self._execute_knotc('conf-abort')
-                LOG.info(_LI("Zone change aborted: %r"), e)
+                LOG.info("Zone change aborted: %r", e)
                 raise
             else:
                 self._execute_knotc('conf-commit')
@@ -163,16 +178,18 @@ class Knot2Backend(base.AgentBackend):
                 # Zone not found
                 return None
 
-            LOG.error(_LE("Command output: %(out)r Stderr: %(err)r"), {
-                'out': e.stdout, 'err': e.stderr
-            })
+            LOG.error("Command output: %(out)r Stderr: %(err)r",
+                      {
+                          'out': e.stdout,
+                          'err': e.stderr
+                      })
             raise exceptions.Backend(e)
 
         try:
             serial = out.split('|')[1].split()[1]
             return int(serial)
         except Exception as e:
-            LOG.error(_LE("Unable to parse knotc output: %r"), out)
+            LOG.error("Unable to parse knotc output: %r", out)
             raise exceptions.Backend("Unexpected knotc zone-status output")
 
     def create_zone(self, zone):
@@ -182,7 +199,7 @@ class Knot2Backend(base.AgentBackend):
         :param zone: zone to be  created
         :type zone: raw pythondns Zone
         """
-        zone_name = zone.origin.to_text().rstrip('.')
+        zone_name = zone.origin.to_text(omit_final_dot=True).decode('utf-8')
         LOG.debug("Creating %s", zone_name)
         # The zone might be already in place due to a race condition between
         # checking if the zone is there and creating it across different
@@ -200,7 +217,7 @@ class Knot2Backend(base.AgentBackend):
         :param zone: zone to be  created
         :type zone: raw pythondns Zone
         """
-        zone_name = zone.origin.to_text()
+        zone_name = zone.origin.to_text(omit_final_dot=True).decode('utf-8')
         LOG.debug("Triggering AXFR from MiniDNS to Knot for %s", zone_name)
         self._start_minidns_to_knot_axfr(zone_name)
 

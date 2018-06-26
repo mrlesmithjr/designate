@@ -21,18 +21,27 @@ from designate.notification_handler.base import BaseAddressHandler
 
 LOG = logging.getLogger(__name__)
 
-cfg.CONF.register_group(cfg.OptGroup(
+# TODO(trungnv): update default format for v4 and v6 in these cfg.
+nova_group = cfg.OptGroup(
     name='handler:nova_fixed',
     title="Configuration for Nova Notification Handler"
-))
+)
 
-cfg.CONF.register_opts([
-    cfg.ListOpt('notification-topics', default=['notifications']),
-    cfg.StrOpt('control-exchange', default='nova'),
-    cfg.StrOpt('zone-id'),
-    cfg.MultiStrOpt('format', default=[
-                    '%(octet0)s-%(octet1)s-%(octet2)s-%(octet3)s.%(zone)s'])
-], group='handler:nova_fixed')
+nova_opts = [
+    cfg.ListOpt('notification-topics', default=['notifications'],
+                help='notification any events from nova'),
+    cfg.StrOpt('control-exchange', default='nova',
+               help='control-exchange for nova notification'),
+    cfg.StrOpt('zone-id', help='Zone ID with each notification'),
+    cfg.MultiStrOpt('formatv4', help='IPv4 format'),
+    cfg.MultiStrOpt('format', deprecated_for_removal=True,
+                    deprecated_reason="Replaced by 'formatv4/formatv6'",
+                    help='format which replaced by formatv4/formatv6'),
+    cfg.MultiStrOpt('formatv6', help='IPv6 format')
+]
+
+cfg.CONF.register_group(nova_group)
+cfg.CONF.register_opts(nova_opts, group=nova_group)
 
 
 class NovaFixedHandler(BaseAddressHandler):
@@ -62,7 +71,7 @@ class NovaFixedHandler(BaseAddressHandler):
 
         zone_id = cfg.CONF[self.name].zone_id
         if event_type == 'compute.instance.create.end':
-            payload['project'] = getattr(context, 'tenant', None)
+            payload['project'] = context.get("project_name", None)
             self._create(addresses=payload['fixed_ips'],
                          extra=payload,
                          zone_id=zone_id,

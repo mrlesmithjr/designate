@@ -111,9 +111,9 @@ class EnhancedDNSClient(object):
         # Ensure Suds (or suds-jerko) have been installed
         if SudsClient is None:
             raise EnhancedDNSException(
-                "Dependancy missing, please install suds or suds-jurko")
+                "Dependency missing, please install suds or suds-jurko")
 
-        # Prepare a SUDS transport with the approperiate credentials
+        # Prepare a SUDS transport with the appropriate credentials
         transport = EnhancedDNSHttpAuthenticated(
             username=username,
             password=password,
@@ -144,13 +144,13 @@ class EnhancedDNSClient(object):
         return zone
 
     def getZone(self, zoneName):
-        LOG.debug("Performing getZone with zoneName: %s" % zoneName)
+        LOG.debug("Performing getZone with zoneName: %s", zoneName)
         zoneName = self._sanitizeZoneName(zoneName)
 
         try:
             return self.client.service.getZone(zoneName=zoneName)
         except Exception as e:
-            raise EnhancedDNSException('Akamai Communication Failure: %s' % e)
+            raise EnhancedDNSException('Akamai Communication Failure: %s', e)
 
     def setZones(self, zones):
         LOG.debug("Performing setZones")
@@ -169,7 +169,7 @@ class EnhancedDNSClient(object):
                                            % e)
 
     def setZone(self, zone):
-        LOG.debug("Performing setZone with zoneName: %s" % zone.zoneName)
+        LOG.debug("Performing setZone with zoneName: %s", zone.zoneName)
         try:
             self.client.service.setZone(zone=zone)
         except Exception as e:
@@ -197,6 +197,13 @@ class EnhancedDNSClient(object):
         try:
             self.client.service.deleteZones(zoneNames=zoneNames)
         except Exception as e:
+            # *READ THIS SECTION BEFORE MAKING ANY CHANGES*
+            # Added 01/2017 by Graham Hayes.
+            # If you have run a spell checking tool against the repo, and it
+            # changes the line below - the patch will get -2'd.
+            # This is matching a string that comes back from the akamai API.
+            # If the akamai API changes - then this should change, but no
+            # other reason.
             if 'Could not retrive object ID for zone' in str(e):
                 # The zone has already been purged, ignore and move on
                 pass
@@ -221,7 +228,7 @@ def build_zone(client, target, zone):
             zone.name,
             masters,
             zone.id,
-            target.options["tsig_key_name"],
+            target.options.get("tsig_key_name", None),
             target.options.get("tsig_key_secret", None),
             target.options.get("tsig_key_algorithm", None))
     else:

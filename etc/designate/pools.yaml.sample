@@ -9,7 +9,7 @@
 
   # Attributes are Key:Value pairs that describe the pool. for example the level
   # of service (i.e. service_tier:GOLD), capabilities (i.e. anycast: true) or
-  # other metadata. Users can use this infomation to point their zones to the
+  # other metadata. Users can use this information to point their zones to the
   # correct pool
   attributes: {}
 
@@ -24,8 +24,6 @@
   # servers. We use these to verify changes have propagated to all nameservers.
   nameservers:
     - host: 192.0.2.2
-      port: 53
-    - host: 192.0.2.3
       port: 53
 
   # List out the targets for this pool. For PowerDNS, this is the database
@@ -42,7 +40,7 @@
 
       # PowerDNS Configuration options
       options:
-        host: 192.0.2.1
+        host: 192.0.2.2
         port: 53
         connection: 'mysql+pymysql://designate:password@127.0.0.1/designate_pdns?charset=utf8'
 

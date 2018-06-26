@@ -452,7 +452,7 @@ links:
   description: |
     Links to the resource, and other related resources.
     When a response has been broken into pages, we will include
-    a ``next`` link that should be followed to retrive all results
+    a ``next`` link that should be followed to retrieve all results
   in: body
   required: true
   type: object
@@ -676,6 +676,15 @@ version:
   required: true
   type: integer
 
+zone_attributes:
+  description: |
+    Key:Value pairs of information about this zone, and the pool the user
+    would like to place the zone in. This information can be used by the
+    scheduler to place zones on the correct pool.
+  in: body
+  required: false
+  type: dict
+
 zone_description:
   description: |
     Description for this zone
@@ -775,9 +784,9 @@ zone_import_zone_id:
 
 zone_masters:
   description: |
-    For secondary zones. The servers to slave from to get DNS information
+    Mandatory for secondary zones. The servers to slave from to get DNS information
   in: body
-  required: true
+  required: false
   type: enum
 
 zone_name:

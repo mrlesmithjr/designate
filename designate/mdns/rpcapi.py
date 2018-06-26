@@ -16,10 +16,10 @@ from oslo_config import cfg
 from oslo_log import log as logging
 import oslo_messaging as messaging
 
-from designate.i18n import _LI
 from designate import rpc
 from designate.loggingutils import rpc_logging
 
+CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
 
 MDNS_API = None
@@ -49,7 +49,7 @@ class MdnsAPI(object):
     RPC_XFR_API_VERSION = '1.0'
 
     def __init__(self, topic=None):
-        topic = topic if topic else cfg.CONF.mdns_topic
+        topic = topic if topic else cfg.CONF['service:mdns'].mdns_topic
 
         notify_target = messaging.Target(topic=topic,
                                          namespace='notify',
@@ -77,10 +77,19 @@ class MdnsAPI(object):
 
     def notify_zone_changed(self, context, zone, host, port, timeout,
                             retry_interval, max_retries, delay):
-        LOG.info(_LI("notify_zone_changed: Calling mdns for zone '%(zone)s', "
-                     "serial '%(serial)s' to nameserver '%(host)s:%(port)s'"),
-                 {'zone': zone.name, 'serial': zone.serial,
-                  'host': host, 'port': port})
+        if CONF['service:worker'].notify and CONF['service:worker'].enabled:
+            LOG.debug('Letting worker send NOTIFYs instead')
+            return True
+
+        LOG.info(
+            "notify_zone_changed: Calling mdns for zone '%(zone)s', "
+            "serial '%(serial)s' to nameserver '%(host)s:%(port)s'",
+            {
+                'zone': zone.name,
+                'serial': zone.serial,
+                'host': host,
+                'port': port
+            })
         # The notify_zone_changed method is a cast rather than a call since the
         # caller need not wait for the notify to complete.
         return self.notify_client.cast(
@@ -92,10 +101,14 @@ class MdnsAPI(object):
     def poll_for_serial_number(self, context, zone, nameserver, timeout,
                                retry_interval, max_retries, delay):
         LOG.info(
-            _LI("poll_for_serial_number: Calling mdns for zone '%(zone)s', "
-                "serial '%(serial)s' on nameserver '%(host)s:%(port)s'"),
-            {'zone': zone.name, 'serial': zone.serial,
-             'host': nameserver.host, 'port': nameserver.port})
+            "poll_for_serial_number: Calling mdns for zone '%(zone)s', "
+            "serial '%(serial)s' on nameserver '%(host)s:%(port)s'",
+            {
+                'zone': zone.name,
+                'serial': zone.serial,
+                'host': nameserver.host,
+                'port': nameserver.port
+            })
         # The poll_for_serial_number method is a cast rather than a call since
         # the caller need not wait for the poll to complete. Mdns informs pool
         # manager of the return value using update_status
@@ -108,10 +121,14 @@ class MdnsAPI(object):
     def get_serial_number(self, context, zone, host, port, timeout,
                           retry_interval, max_retries, delay):
         LOG.info(
-            _LI("get_serial_number: Calling mdns for zone '%(zone)s', serial "
-                "%(serial)s' on nameserver '%(host)s:%(port)s'"),
-            {'zone': zone.name, 'serial': zone.serial,
-             'host': host, 'port': port})
+            "get_serial_number: Calling mdns for zone '%(zone)s', serial "
+            "%(serial)s' on nameserver '%(host)s:%(port)s'",
+            {
+                'zone': zone.name,
+                'serial': zone.serial,
+                'host': host,
+                'port': port
+            })
         cctxt = self.notify_client.prepare()
         return cctxt.call(
             context, 'get_serial_number', zone=zone,
@@ -120,6 +137,6 @@ class MdnsAPI(object):
             delay=delay)
 
     def perform_zone_xfr(self, context, zone):
-        LOG.info(_LI("perform_zone_xfr: Calling mdns for zone %(zone)s"),
+        LOG.info("perform_zone_xfr: Calling mdns for zone %(zone)s",
                  {"zone": zone.name})
         return self.xfr_client.cast(context, 'perform_zone_xfr', zone=zone)

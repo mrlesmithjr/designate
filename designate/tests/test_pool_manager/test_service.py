@@ -13,9 +13,6 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations
 # under the License.
-
-import uuid
-
 from oslo_log import log
 import oslo_messaging as messaging
 from mock import call
@@ -24,6 +21,7 @@ from mock import patch
 
 from designate import exceptions
 from designate import objects
+from designate.utils import generate_uuid
 from designate.backend import impl_fake
 from designate.central import rpcapi as central_rpcapi
 from designate.mdns import rpcapi as mdns_rpcapi
@@ -44,7 +42,7 @@ class PoolManagerServiceNoopTest(PoolManagerTestCase):
             threshold_percentage=100,
             enable_recovery_timer=False,
             enable_sync_timer=False,
-            poll_retry_interval=0.5,
+            poll_retry_interval=1,
             poll_max_retries=1,
             cache_driver='noop',
             group='service:pool_manager')
@@ -78,8 +76,8 @@ class PoolManagerServiceNoopTest(PoolManagerTestCase):
 
     def _build_zones(self, n, action, status):
         return [
-            self._build_zone("zone%02X.example" % cnt, action,
-                             status, id=str(uuid.uuid4()))
+            self._build_zone("zone%02X.example." % cnt, action,
+                             status, id=generate_uuid())
             for cnt in range(n)
         ]
 
@@ -106,9 +104,9 @@ class PoolManagerServiceNoopTest(PoolManagerTestCase):
         self.assertEqual(2, mock_poll_for_serial_number.call_count)
         self.assertEqual(
             [call(self.admin_context, zone,
-                  self.service.pool.nameservers[0], 30, 0.5, 1, 5),
+                  self.service.pool.nameservers[0], 30, 1, 1, 5),
              call(self.admin_context, zone,
-                  self.service.pool.nameservers[1], 30, 0.5, 1, 5)],
+                  self.service.pool.nameservers[1], 30, 1, 1, 5)],
             mock_poll_for_serial_number.call_args_list)
 
         # Pool manager needs to call into mdns to calculate consensus as
@@ -124,7 +122,6 @@ class PoolManagerServiceNoopTest(PoolManagerTestCase):
     def test_create_zone_target_both_failure(
             self, mock_update_status, mock_notify_zone_changed,
             mock_poll_for_serial_number, mock_create_zone, _):
-
         zone = self._build_zone('example.org.', 'CREATE', 'PENDING')
 
         mock_create_zone.side_effect = exceptions.Backend
@@ -134,11 +131,6 @@ class PoolManagerServiceNoopTest(PoolManagerTestCase):
         create_statuses = self.service._retrieve_statuses(
             self.admin_context, zone, 'CREATE')
         self.assertEqual(0, len(create_statuses))
-
-        # Ensure notify_zone_changed and poll_for_serial_number
-        # were never called.
-        self.assertFalse(mock_notify_zone_changed.called)
-        self.assertFalse(mock_poll_for_serial_number.called)
 
         # Since consensus is not reached this early, we immediately call
         # central's update_status.
@@ -199,13 +191,6 @@ class PoolManagerServiceNoopTest(PoolManagerTestCase):
         self.assertEqual(0, len(create_statuses))
 
         # Ensure poll_for_serial_number was called for each nameserver.
-        self.assertEqual(
-            [call(self.admin_context, zone,
-                  self.service.pool.nameservers[0], 30, 0.5, 1, 5),
-             call(self.admin_context, zone,
-                  self.service.pool.nameservers[1], 30, 0.5, 1, 5)],
-            mock_poll_for_serial_number.call_args_list)
-
         self.assertFalse(mock_update_status.called)
 
     @patch.object(mdns_rpcapi.MdnsAPI, 'get_serial_number',
@@ -365,7 +350,9 @@ class PoolManagerServiceNoopTest(PoolManagerTestCase):
         zone = self._build_zone('example.org.', 'UPDATE', 'PENDING')
         self.service._update_zone_on_target = Mock(return_value=True)
         self.service._update_zone_on_also_notify = Mock()
-        self.service.pool.also_notifies = ['bogus']
+        self.service.pool.also_notifies = objects.PoolAlsoNotifyList(
+            objects=[objects.PoolAlsoNotify(host='1.0.0.0', port=1)]
+        )
         self.service._exceed_or_meet_threshold = Mock(return_value=True)
 
         # cache.retrieve will throw exceptions.PoolManagerStatusNotFound

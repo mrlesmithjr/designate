@@ -15,13 +15,14 @@ import six
 from oslo_log import log as logging
 from oslo_utils.strutils import bool_from_string
 
-from designate.objects import PoolAttributeList
-from designate.scheduler.filters.base import Filter
+from designate import exceptions
+from designate.objects import PoolList
+from designate.scheduler.filters import base
 
 LOG = logging.getLogger(__name__)
 
 
-class AttributeFilter(Filter):
+class AttributeFilter(base.Filter):
     """This allows users to choose the pool by supplying hints to this filter.
     These are provided as attributes as part of the zone object provided at
     zone create time.
@@ -39,7 +40,7 @@ class AttributeFilter(Filter):
             "name": "example.com."
         }
 
-    The zone attributes are matched against the potential pool candiates, and
+    The zone attributes are matched against the potential pool candidates, and
     any pools that do not match **all** hints are removed.
 
     .. warning::
@@ -57,11 +58,27 @@ class AttributeFilter(Filter):
 
     def filter(self, context, pools, zone):
 
-        zone_attributes = zone.attributes.to_dict()
+        try:
+            zone_attributes = zone.attributes.to_dict()
+        except exceptions.RelationNotLoaded:
+            zone_attributes = {}
 
         def evaluate_pool(pool):
+            try:
+                pool_attributes = pool.attributes.to_dict()
+            except exceptions.RelationNotLoaded:
+                pool_attributes = {}
 
-            pool_attributes = pool.attributes.to_dict()
+            # Remove the "pool_id" attribute, that is used in
+            # PoolIDAttributeFilter. If the item is not in the dict, it is
+            # fine, we should just continue.
+            pool_attributes.pop('pool_id', None)
+
+            if pool_attributes == {}:
+                # If we did not send any attribute to filter on, we should
+                # not filter the pools based on an empty set, as this will
+                # return no pools.
+                return True
 
             # Check if the keys requested exist in this pool
             if not {key for key in six.iterkeys(pool_attributes)}.issuperset(
@@ -107,6 +124,6 @@ class AttributeFilter(Filter):
 
         pool_list = [pool for pool in pools if evaluate_pool(pool)]
 
-        pools = PoolAttributeList(objects=pool_list)
+        pools = PoolList(objects=pool_list)
 
         return pools

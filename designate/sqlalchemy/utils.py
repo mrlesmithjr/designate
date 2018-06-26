@@ -26,11 +26,20 @@ from oslo_db.sqlalchemy.migration_cli import manager
 from oslo_log import log
 
 from designate.i18n import _
-from designate.i18n import _LW
 from designate import exceptions
 
 
 LOG = log.getLogger(__name__)
+
+RRSET_FILTERING_INDEX = {
+    'created_at': 'recordset_created_at',
+    'updated_at': 'rrset_updated_at',
+    'zone_id': 'rrset_zoneid',
+    'name': 'recordset_type_name',
+    'type': 'rrset_type',
+    'ttl': 'rrset_ttl',
+    'tenant_id': 'rrset_tenant_id',
+}
 
 
 def get_migration_manager(repo_path, url, init_version=None):
@@ -87,7 +96,7 @@ def sort_query(query, table, sort_keys, sort_dir=None, sort_dirs=None):
     if 'id' not in sort_keys:
         # TODO(justinsb): If this ever gives a false-positive, check
         # the actual primary key, rather than assuming its id
-        LOG.warning(_LW('Id not in sort_keys; is sort_keys unique?'))
+        LOG.warning('Id not in sort_keys; is sort_keys unique?')
 
     assert(not (sort_dir and sort_dirs))
 
@@ -140,3 +149,13 @@ def check_marker(table, marker, session):
             raise
 
     return marker
+
+
+def get_rrset_index(sort_key):
+    rrset_index_hint = None
+    index = RRSET_FILTERING_INDEX.get(sort_key)
+
+    if index:
+        rrset_index_hint = 'USE INDEX (%s)' % index
+
+    return rrset_index_hint

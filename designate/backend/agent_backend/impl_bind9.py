@@ -24,10 +24,30 @@ from oslo_log import log as logging
 from designate.backend.agent_backend import base
 from designate import exceptions
 from designate import utils
-from designate.i18n import _LI
 
 LOG = logging.getLogger(__name__)
 CFG_GROUP = 'backend:agent:bind9'
+
+"""GROUP = backend:agent:bind9"""
+bind9_group = cfg.OptGroup(
+    name='backend:agent:bind9', title="Configuration for bind9 backend"
+)
+
+bind9_opts = [
+    cfg.StrOpt('rndc-host', default='127.0.0.1', help='RNDC Host'),
+    cfg.IntOpt('rndc-port', default=953, help='RNDC Port'),
+    cfg.StrOpt('rndc-config-file',
+               help='RNDC Config File'),
+    cfg.StrOpt('rndc-key-file', help='RNDC Key File'),
+    cfg.StrOpt('zone-file-path', default='$state_path/zones',
+               help='Path where zone files are stored'),
+    cfg.StrOpt('query-destination', default='127.0.0.1',
+               help='Host to query when finding zones')
+]
+
+
+cfg.CONF.register_group(bind9_group)
+cfg.CONF.register_opts(bind9_opts, group=bind9_group)
 
 
 class Bind9Backend(base.AgentBackend):
@@ -37,29 +57,13 @@ class Bind9Backend(base.AgentBackend):
 
     @classmethod
     def get_cfg_opts(cls):
-        group = cfg.OptGroup(
-            name='backend:agent:bind9', title="Configuration for bind9 backend"
-        )
-
-        opts = [
-            cfg.StrOpt('rndc-host', default='127.0.0.1', help='RNDC Host'),
-            cfg.IntOpt('rndc-port', default=953, help='RNDC Port'),
-            cfg.StrOpt('rndc-config-file',
-                       help='RNDC Config File'),
-            cfg.StrOpt('rndc-key-file', help='RNDC Key File'),
-            cfg.StrOpt('zone-file-path', default='$state_path/zones',
-                       help='Path where zone files are stored'),
-            cfg.StrOpt('query-destination', default='127.0.0.1',
-                       help='Host to query when finding zones')
-        ]
-
-        return [(group, opts)]
+        return [(bind9_group, bind9_opts)]
 
     def start(self):
-        LOG.info(_LI("Started bind9 backend"))
+        LOG.info("Started bind9 backend")
 
     def find_zone_serial(self, zone_name):
-        LOG.debug("Finding %s" % zone_name)
+        LOG.debug("Finding %s", zone_name)
         resolver = dns.resolver.Resolver()
         resolver.nameservers = [cfg.CONF[CFG_GROUP].query_destination]
         try:
@@ -69,11 +73,11 @@ class Bind9Backend(base.AgentBackend):
         return rdata.serial
 
     def create_zone(self, zone):
-        LOG.debug("Creating %s" % zone.origin.to_text())
+        LOG.debug("Creating %s", zone.origin.to_text())
         self._sync_zone(zone, new_zone_flag=True)
 
     def update_zone(self, zone):
-        LOG.debug("Updating %s" % zone.origin.to_text())
+        LOG.debug("Updating %s", zone.origin.to_text())
         self._sync_zone(zone)
 
     def delete_zone(self, zone_name):
@@ -107,7 +111,7 @@ class Bind9Backend(base.AgentBackend):
 
         # NOTE: Different versions of BIND9 behave differently with a trailing
         #       dot, so we're just going to take it off.
-        zone_name = zone.origin.to_text().rstrip('.')
+        zone_name = zone.origin.to_text(omit_final_dot=True).decode('utf-8')
 
         # NOTE: Only one thread should be working with the Zonefile at a given
         #       time. The sleep(1) below introduces a not insignificant risk

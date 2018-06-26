@@ -20,7 +20,6 @@ from oslo_context import context
 from oslo_log import log as logging
 
 from designate import policy
-from designate.i18n import _LI
 
 LOG = logging.getLogger(__name__)
 
@@ -28,16 +27,21 @@ LOG = logging.getLogger(__name__)
 class DesignateContext(context.RequestContext):
 
     _all_tenants = False
+    _hide_counts = False
     _abandon = None
     original_tenant = None
     _edit_managed_records = False
+    _client_addr = None
+    FROM_DICT_EXTRA_KEYS = [
+        'original_tenant', 'service_catalog', 'all_tenants', 'abandon',
+        'edit_managed_records', 'tsigkey_id', 'hide_counts', 'client_addr',
+    ]
 
     def __init__(self, service_catalog=None, all_tenants=False, abandon=None,
-                 tsigkey_id=None, user_identity=None, original_tenant=None,
-                 edit_managed_records=False, **kwargs):
+                 tsigkey_id=None, original_tenant=None,
+                 edit_managed_records=False, hide_counts=False,
+                 client_addr=None, **kwargs):
 
-        # NOTE: user_identity may be passed in, but will be silently dropped as
-        #       it is a generated field based on several others.
         super(DesignateContext, self).__init__(**kwargs)
 
         self.service_catalog = service_catalog
@@ -48,6 +52,8 @@ class DesignateContext(context.RequestContext):
         self.all_tenants = all_tenants
         self.abandon = abandon
         self.edit_managed_records = edit_managed_records
+        self.hide_counts = hide_counts
+        self.client_addr = client_addr
 
     def deepcopy(self):
         d = self.to_dict()
@@ -80,14 +86,12 @@ class DesignateContext(context.RequestContext):
             'all_tenants': self.all_tenants,
             'abandon': self.abandon,
             'edit_managed_records': self.edit_managed_records,
-            'tsigkey_id': self.tsigkey_id
+            'tsigkey_id': self.tsigkey_id,
+            'hide_counts': self.hide_counts,
+            'client_addr': self.client_addr,
         })
 
         return copy.deepcopy(d)
-
-    @classmethod
-    def from_dict(cls, values):
-        return cls(**values)
 
     def elevated(self, show_deleted=None, all_tenants=False,
                  edit_managed_records=False):
@@ -115,7 +119,7 @@ class DesignateContext(context.RequestContext):
 
         policy.check('use_sudo', self)
 
-        LOG.info(_LI('Accepted sudo from user %(user)s to tenant %(tenant)s'),
+        LOG.info('Accepted sudo from user %(user)s to tenant %(tenant)s',
                  {'user': self.user, 'tenant': tenant})
         self.original_tenant = self.tenant
         self.tenant = tenant
@@ -154,6 +158,14 @@ class DesignateContext(context.RequestContext):
         self._all_tenants = value
 
     @property
+    def hide_counts(self):
+        return self._hide_counts
+
+    @hide_counts.setter
+    def hide_counts(self, value):
+        self._hide_counts = value
+
+    @property
     def abandon(self):
         return self._abandon
 
@@ -172,6 +184,14 @@ class DesignateContext(context.RequestContext):
         if value:
             policy.check('edit_managed_records', self)
         self._edit_managed_records = value
+
+    @property
+    def client_addr(self):
+        return self._client_addr
+
+    @client_addr.setter
+    def client_addr(self, value):
+        self._client_addr = value
 
 
 def get_current():

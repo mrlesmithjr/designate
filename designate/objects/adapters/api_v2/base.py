@@ -12,14 +12,12 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 from six.moves.urllib import parse
-from oslo_log import log as logging
 from oslo_config import cfg
 
 from designate.objects.adapters import base
-from designate.objects import base as obj_base
+from designate.objects import base as ovoobj_base
 from designate import exceptions
 
-LOG = logging.getLogger(__name__)
 
 cfg.CONF.import_opt('api_base_uri', 'designate.api', group='service:api')
 cfg.CONF.import_opt('enable_host_header', 'designate.api', group='service:api')
@@ -46,7 +44,7 @@ class APIv2Adapter(base.DesignateAdapter):
             r_list['links'] = cls._get_collection_links(
                 list_object, kwargs['request'])
         # Check if we should include metadata
-        if isinstance(list_object, obj_base.PagedListObjectMixin):
+        if isinstance(list_object, ovoobj_base.PagedListObjectMixin):
             metadata = {}
             if list_object.total_count is not None:
                 metadata['total_count'] = list_object.total_count

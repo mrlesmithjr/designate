@@ -51,8 +51,6 @@ from oslo_log import log as logging
 from designate import utils
 from designate import exceptions
 from designate.backend.agent_backend import base
-from designate.i18n import _LI
-from designate.i18n import _LE
 
 LOG = logging.getLogger(__name__)
 CFG_GROUP = 'backend:agent:gdnsd'
@@ -61,6 +59,25 @@ GDNSD_DEFAULT_PATH = 'gdnsd'
 CONFDIR_PATH = '/etc/gdnsd'
 SOA_QUERY_TIMEOUT = 1
 ZONE_FILE_PERMISSIONS = 0o0644
+
+
+"""GROUP = backend:agent:gdnsd"""
+gdnsd_group = cfg.OptGroup(
+            name='backend:agent:gdnsd', title="Configuration for gdnsd backend"
+        )
+gdnsd_opts = [
+    cfg.StrOpt('gdnsd-cmd-name',
+               help='gdnsd executable path or rootwrap command name',
+               default='gdnsd'),
+    cfg.StrOpt('confdir-path',
+               help='gdnsd configuration directory path',
+               default='/etc/gdnsd'),
+    cfg.StrOpt('query-destination', default='127.0.0.1',
+               help='Host to query when finding zones')
+]
+
+cfg.CONF.register_group(gdnsd_group)
+cfg.CONF.register_opts(gdnsd_opts, group=gdnsd_group)
 
 
 def filter_exceptions(fn):
@@ -72,8 +89,8 @@ def filter_exceptions(fn):
         except exceptions.Backend as e:
             raise e
         except Exception as e:
-            LOG.error(_LE("Unhandled exception %s"), e.message, exc_info=True)
-            raise exceptions.Backend(e.message)
+            LOG.error("Unhandled exception %s", e, exc_info=True)
+            raise exceptions.Backend(e)
 
     return wrapper
 
@@ -84,35 +101,22 @@ class GdnsdBackend(base.AgentBackend):
 
     @classmethod
     def get_cfg_opts(cls):
-        group = cfg.OptGroup(
-            name=CFG_GROUP, title="Configuration for gdnsd backend"
-        )
-        opts = [
-            cfg.StrOpt('gdnsd-cmd-name',
-                       help='gdnsd executable path or rootwrap command name',
-                       default=GDNSD_DEFAULT_PATH),
-            cfg.StrOpt('confdir-path',
-                       help='gdnsd configuration directory path',
-                       default=CONFDIR_PATH),
-            cfg.StrOpt('query-destination', default='127.0.0.1',
-                       help='Host to query when finding zones')
-        ]
-        return [(group, opts)]
+        return [(gdnsd_group, gdnsd_opts)]
 
     def __init__(self, *a, **kw):
         """Configure the backend"""
         super(GdnsdBackend, self).__init__(*a, **kw)
 
         self._gdnsd_cmd_name = cfg.CONF[CFG_GROUP].gdnsd_cmd_name
-        LOG.info(_LI("gdnsd command: %r"), self._gdnsd_cmd_name)
+        LOG.info("gdnsd command: %r", self._gdnsd_cmd_name)
         self._confdir_path = cfg.CONF[CFG_GROUP].confdir_path
         self._zonedir_path = os.path.join(self._confdir_path, 'zones')
-        LOG.info(_LI("gdnsd conf directory: %r"), self._confdir_path)
+        LOG.info("gdnsd conf directory: %r", self._confdir_path)
         self._resolver = dns.resolver.Resolver(configure=False)
         self._resolver.timeout = SOA_QUERY_TIMEOUT
         self._resolver.lifetime = SOA_QUERY_TIMEOUT
         self._resolver.nameservers = [cfg.CONF[CFG_GROUP].query_destination]
-        LOG.info(_LI("Resolvers: %r"), self._resolver.nameservers)
+        LOG.info("Resolvers: %r", self._resolver.nameservers)
         self._check_dirs(self._zonedir_path)
 
     def start(self):
@@ -120,7 +124,7 @@ class GdnsdBackend(base.AgentBackend):
 
         :raises: exception.Backend on invalid configuration
         """
-        LOG.info(_LI("Started gdnsd backend"))
+        LOG.info("Started gdnsd backend")
         self._check_conf()
 
     def _check_conf(self):
@@ -133,9 +137,11 @@ class GdnsdBackend(base.AgentBackend):
                 run_as_root=False,
             )
         except ProcessExecutionError as e:
-            LOG.error(_LE("Command output: %(out)r Stderr: %(err)r"), {
-                'out': e.stdout, 'err': e.stderr
-            })
+            LOG.error("Command output: %(out)r Stderr: %(err)r",
+                      {
+                          'out': e.stdout,
+                          'err': e.stderr
+                      })
             raise exceptions.Backend("Configuration check failed")
 
     def _check_dirs(self, *dirnames):
@@ -178,7 +184,7 @@ class GdnsdBackend(base.AgentBackend):
         """Create or update a zone file atomically.
         The zone file is written to a unique temp file and then renamed
         """
-        zone_name = zone.origin.to_text().rstrip('.')
+        zone_name = zone.origin.to_text(omit_final_dot=True).decode('utf-8')
         zone_base_fname = self._generate_zone_filename(zone_name)
         zone_fname = os.path.join(self._zonedir_path, zone_base_fname)
         try:
@@ -240,6 +246,6 @@ class GdnsdBackend(base.AgentBackend):
             LOG.debug('Deleted Zone: %s', zone_name)
         except OSError as e:
             if os.errno.ENOENT == e.errno:
-                LOG.info(_LI("Zone datafile %s was already deleted"), zone_fn)
+                LOG.info("Zone datafile %s was already deleted", zone_fn)
                 return
             raise

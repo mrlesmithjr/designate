@@ -14,15 +14,10 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 import pecan
-from oslo_config import cfg
 from oslo_log import log as logging
 
 from designate.api.v2.controllers import rest
 from designate.objects.adapters import DesignateAdapter
-from designate.i18n import _LI
-
-
-CONF = cfg.CONF
 
 LOG = logging.getLogger(__name__)
 
@@ -40,7 +35,7 @@ class NameServersController(rest.RestController):
 
         ns_records = self.central_api.get_zone_ns_records(context, zone_id)
 
-        LOG.info(_LI("Created %(ns_records)s"), {'ns_records': ns_records})
+        LOG.info("Created %(ns_records)s", {'ns_records': ns_records})
 
         return {
             "nameservers": DesignateAdapter.render(

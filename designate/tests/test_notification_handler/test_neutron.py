@@ -32,7 +32,7 @@ class NeutronFloatingHandlerTest(TestCase, NotificationHandlerMixin):
         self.config(zone_id=zone['id'], group='handler:neutron_floatingip')
         formats = ['%(octet0)s-%(octet1)s-%(octet2)s-%(octet3)s.%(zone)s',
                    '%(octet0)s-%(octet1)s-%(octet2)s-%(octet3)s.X.%(zone)s']
-        self.config(format=formats, group='handler:neutron_floatingip')
+        self.config(formatv4=formats, group='handler:neutron_floatingip')
 
         self.plugin = NeutronFloatingHandler()
 
@@ -52,7 +52,7 @@ class NeutronFloatingHandlerTest(TestCase, NotificationHandlerMixin):
         self.assertEqual(2, len(records))
 
         self.plugin.process_notification(
-            self.admin_context, event_type, fixture['payload'])
+            self.admin_context.to_dict(), event_type, fixture['payload'])
 
         # Ensure we now have exactly 1 record, plus SOA & NS
         records = self.central_service.find_records(self.admin_context,
@@ -64,7 +64,7 @@ class NeutronFloatingHandlerTest(TestCase, NotificationHandlerMixin):
         start_event_type = 'floatingip.update.end'
         start_fixture = self.get_notification_fixture(
             'neutron', start_event_type + '_associate')
-        self.plugin.process_notification(self.admin_context,
+        self.plugin.process_notification(self.admin_context.to_dict(),
                                          start_event_type,
                                          start_fixture['payload'])
 
@@ -83,7 +83,7 @@ class NeutronFloatingHandlerTest(TestCase, NotificationHandlerMixin):
         self.assertEqual(4, len(records))
 
         self.plugin.process_notification(
-            self.admin_context, event_type, fixture['payload'])
+            self.admin_context.to_dict(), event_type, fixture['payload'])
 
         # Simulate the record having been deleted on the backend
         zone_serial = self.central_service.get_zone(
@@ -101,7 +101,7 @@ class NeutronFloatingHandlerTest(TestCase, NotificationHandlerMixin):
         start_event_type = 'floatingip.update.end'
         start_fixture = self.get_notification_fixture(
             'neutron', start_event_type + '_associate')
-        self.plugin.process_notification(self.admin_context,
+        self.plugin.process_notification(self.admin_context.to_dict(),
                                          start_event_type,
                                          start_fixture['payload'])
 
@@ -119,7 +119,7 @@ class NeutronFloatingHandlerTest(TestCase, NotificationHandlerMixin):
         self.assertEqual(4, len(records))
 
         self.plugin.process_notification(
-            self.admin_context, event_type, fixture['payload'])
+            self.admin_context.to_dict(), event_type, fixture['payload'])
 
         # Simulate the record having been deleted on the backend
         zone_serial = self.central_service.get_zone(

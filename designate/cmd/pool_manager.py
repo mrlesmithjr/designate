@@ -18,6 +18,7 @@ import sys
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
+import debtcollector
 
 from designate import service
 from designate import utils
@@ -25,7 +26,7 @@ from designate import version
 from designate import hookpoints
 from designate.pool_manager import service as pool_manager_service
 
-
+LOG = logging.getLogger(__name__)
 CONF = cfg.CONF
 CONF.import_opt('workers', 'designate.pool_manager',
                 group='service:pool_manager')
@@ -38,6 +39,19 @@ def main():
 
     logging.setup(CONF, 'designate')
     gmr.TextGuruMeditation.setup_autorun(version)
+
+    # NOTE(timsim): This is to ensure people don't start the wrong
+    #               services when the worker model is enabled.
+    if cfg.CONF['service:worker'].enabled:
+        LOG.error('You have designate-worker enabled, starting '
+                  'designate-pool-manager is incompatible with '
+                  'designate-worker. You need to start '
+                  'designate-worker instead.')
+        sys.exit(1)
+
+    debtcollector.deprecate('designate-pool-manager is deprecated in favor of '
+                            'designate-worker', version='newton',
+                            removal_version='rocky')
 
     server = pool_manager_service.Service(
         threads=CONF['service:pool_manager'].threads

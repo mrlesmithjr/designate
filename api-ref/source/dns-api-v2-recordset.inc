@@ -13,9 +13,20 @@ Create Recordset
 Create a recordset in a zone
 
 
-Normal response codes: 202
+.. rest_status_code:: success status.yaml
 
-Error response codes: 405,404,403,401,400,503
+   - 202
+
+
+.. rest_status_code:: error status.yaml
+
+   - 400
+   - 401
+   - 403
+   - 404
+   - 405
+   - 409
+   - 503
 
 
 Request
@@ -26,6 +37,7 @@ Request
    - x-auth-token: x-auth-token
    - x-auth-all-projects: x-auth-all-projects
    - x-auth-sudo-project-id: x-auth-sudo-project-id
+   - name: recordset_name
    - zone_id: path_zone_id
    - ttl: recordset_ttl
    - description: recordset_description
@@ -76,9 +88,19 @@ List Recordsets in a Zone
 This lists all recordsets in a zone
 
 
-Normal response codes: 200
+.. rest_status_code:: success status.yaml
 
-Error response codes: 405,404,403,401,400,503
+   - 200
+
+
+.. rest_status_code:: error status.yaml
+
+   - 400
+   - 401
+   - 403
+   - 404
+   - 405
+   - 503
 
 
 Request
@@ -140,9 +162,20 @@ List all Recordsets owned by project
 
 This lists all recordsets owned by a project in Designate
 
-Normal response codes: 200
 
-Error response codes: 405,404,403,401,400,503
+.. rest_status_code:: success status.yaml
+
+   - 200
+
+
+.. rest_status_code:: error status.yaml
+
+   - 400
+   - 401
+   - 403
+   - 404
+   - 405
+   - 503
 
 
 Request
@@ -199,13 +232,24 @@ Response Example
 Show a Recordset
 ================
 
-.. rest_method::  GET /v2/recordsets/{zone_id}/{recordset_id}
+.. rest_method::  GET /v2/zones/{zone_id}/recordsets/{recordset_id}
 
 Show an single recordset
 
-Normal response codes: 200
 
-Error response codes: 405,404,403,401,400,503
+.. rest_status_code:: success status.yaml
+
+   - 200
+
+
+.. rest_status_code:: error status.yaml
+
+   - 400
+   - 401
+   - 403
+   - 404
+   - 405
+   - 503
 
 
 Request
@@ -252,13 +296,25 @@ Response Example
 Update a Recordset
 ==================
 
-.. rest_method::  PATCH /v2/zone/{zone_id}/recordsets/{recordset_id}
+.. rest_method::  PUT /v2/zones/{zone_id}/recordsets/{recordset_id}
 
 Update a recordset
 
-Normal response codes: 202
 
-Error response codes: 405,404,403,401,400,503
+.. rest_status_code:: success status.yaml
+
+   - 202
+
+
+.. rest_status_code:: error status.yaml
+
+   - 400
+   - 401
+   - 403
+   - 404
+   - 405
+   - 409
+   - 503
 
 
 Request
@@ -269,6 +325,7 @@ Request
    - x-auth-token: x-auth-token
    - x-auth-all-projects: x-auth-all-projects
    - x-auth-sudo-project-id: x-auth-sudo-project-id
+   - x-designate-edit-managed-records: x-designate-edit-managed-records
    - zone_id: path_zone_id
    - recordset_id: path_recordset_id
    - ttl: recordset_ttl
@@ -313,13 +370,25 @@ Response Example
 Delete a Recordset
 ==================
 
-.. rest_method::  DELETE /v2/zone/{zone_id}/recordsets/{recordset_id}
+.. rest_method::  DELETE /v2/zones/{zone_id}/recordsets/{recordset_id}
 
 Delete a recordset
 
-Normal response codes: 202
 
-Error response codes: 405,404,403,401,400,503
+.. rest_status_code:: success status.yaml
+
+   - 202
+
+
+.. rest_status_code:: error status.yaml
+
+   - 400
+   - 401
+   - 403
+   - 404
+   - 405
+   - 503
+
 
 
 Request
@@ -330,6 +399,7 @@ Request
    - x-auth-token: x-auth-token
    - x-auth-all-projects: x-auth-all-projects
    - x-auth-sudo-project-id: x-auth-sudo-project-id
+   - x-designate-edit-managed-records: x-designate-edit-managed-records
    - zone_id: path_zone_id
    - recordset_id: path_recordset_id
 
@@ -370,10 +440,21 @@ Create a MX Recordset
 
 Create a MX recordset in a zone
 
+.. rest_status_code:: success status.yaml
 
-Normal response codes: 202
+   - 202
 
-Error response codes: 405,404,403,401,400,503
+
+.. rest_status_code:: error status.yaml
+
+   - 400
+   - 401
+   - 403
+   - 404
+   - 405
+   - 409
+   - 503
+
 
 
 Request
@@ -384,6 +465,7 @@ Request
    - x-auth-token: x-auth-token
    - x-auth-all-projects: x-auth-all-projects
    - x-auth-sudo-project-id: x-auth-sudo-project-id
+   - x-designate-edit-managed-records: x-designate-edit-managed-records
    - zone_id: path_zone_id
    - name: recordset_name
    - ttl: recordset_ttl
@@ -433,12 +515,23 @@ Create a SSHFP Recordset
 
 .. rest_method::  POST /v2/zones/{zone_id}/recordsets
 
-Create a MX recordset in a zone
+Create a SSHFP recordset in a zone
 
 
-Normal response codes: 202
+.. rest_status_code:: success status.yaml
 
-Error response codes: 405,404,403,401,400,503
+   - 202
+
+
+.. rest_status_code:: error status.yaml
+
+   - 400
+   - 401
+   - 403
+   - 404
+   - 405
+   - 409
+   - 503
 
 
 Request
@@ -498,12 +591,22 @@ Create a SPF Recordset
 
 .. rest_method::  POST /v2/zones/{zone_id}/recordsets
 
-Create a MX recordset in a zone
+Create a SPF recordset in a zone
+
+.. rest_status_code:: success status.yaml
+
+   - 202
 
 
-Normal response codes: 202
+.. rest_status_code:: error status.yaml
 
-Error response codes: 405,404,403,401,400,503
+   - 400
+   - 401
+   - 403
+   - 404
+   - 405
+   - 409
+   - 503
 
 
 Request
@@ -563,13 +666,22 @@ Create a SRV Recordset
 
 .. rest_method::  POST /v2/zones/{zone_id}/recordsets
 
-Create a MX recordset in a zone
+Create a SRV recordset in a zone
+
+.. rest_status_code:: success status.yaml
+
+   - 202
 
 
-Normal response codes: 202
+.. rest_status_code:: error status.yaml
 
-Error response codes: 405,404,403,401,400,503
-
+   - 400
+   - 401
+   - 403
+   - 404
+   - 405
+   - 409
+   - 503
 
 Request
 -------

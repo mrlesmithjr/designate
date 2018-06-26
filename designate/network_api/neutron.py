@@ -1,5 +1,3 @@
-# vim: tabstop=4 shiftwidth=4 softtabstop=4
-#
 # Copyright 2012 OpenStack Foundation
 # All Rights Reserved
 #
@@ -24,19 +22,21 @@ from oslo_log import log as logging
 from oslo_service import threadgroup
 
 from designate import exceptions
-from designate.i18n import _LW
-from designate.i18n import _LE
-from designate.network_api.base import NetworkAPI
+from designate.network_api import base
 
 
 CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
 
 
+neutron_group = cfg.OptGroup(
+            name='network_api:neutron', title="Configuration network api"
+        )
+
 neutron_opts = [
     cfg.ListOpt('endpoints',
                 help='URL to use if None in the ServiceCatalog that is '
-                'passed by the requrest context. Format: <region>|<url>'),
+                'passed by the request context. Format: <region>|<url>'),
     cfg.StrOpt('endpoint_type', default='publicURL',
                help="Endpoint type to use"),
     cfg.IntOpt('timeout',
@@ -63,7 +63,8 @@ neutron_opts = [
                     'neutron client requests.'),
 ]
 
-cfg.CONF.register_opts(neutron_opts, group='network_api:neutron')
+cfg.CONF.register_group(neutron_group)
+cfg.CONF.register_opts(neutron_opts, group=neutron_group)
 
 
 def get_client(context, endpoint):
@@ -86,7 +87,7 @@ def get_client(context, endpoint):
     return clientv20.Client(**params)
 
 
-class NeutronNetworkAPI(NetworkAPI):
+class NeutronNetworkAPI(base.NetworkAPI):
     """
     Interact with the Neutron API
     """
@@ -118,13 +119,12 @@ class NeutronNetworkAPI(NetworkAPI):
                 # NOTE: 401 might be that the user doesn't have neutron
                 # activated in a particular region, we'll just log the failure
                 # and go on with our lives.
-                LOG.warning(_LW("Calling Neutron resulted in a 401, "
-                             "please investigate."))
+                LOG.warning("Calling Neutron resulted in a 401, "
+                            "please investigate.")
                 LOG.exception(e)
                 return
             except Exception as e:
-                LOG.error(_LE('Failed calling Neutron '
-                              '%(region)s - %(endpoint)s'),
+                LOG.error('Failed calling Neutron %(region)s - %(endpoint)s',
                           {'region': region, 'endpoint': endpoint})
                 LOG.exception(e)
                 failed.append((e, endpoint, region))
@@ -147,7 +147,7 @@ class NeutronNetworkAPI(NetworkAPI):
 
         # NOTE: Sadly tg code doesn't give us a good way to handle failures.
         if failed:
-            msg = 'Failed retrieving FLoatingIPs from Neutron in %s' % \
+            msg = 'Failed retrieving FloatingIPs from Neutron in %s' % \
                 ", ".join(['%s - %s' % (i[1], i[2]) for i in failed])
             raise exceptions.NeutronCommunicationFailure(msg)
         return data

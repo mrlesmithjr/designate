@@ -30,9 +30,29 @@ sys.path.insert(0, os.path.abspath('./'))
 extensions = ['sphinx.ext.autodoc',
               'sphinx.ext.viewcode',
               'sphinxcontrib.httpdomain',
-              'oslosphinx',
-              'ext.support_matrix']
+              'sphinxcontrib.blockdiag',
+              'ext.support_matrix',
+              'ext.custom_css',
+              'openstackdocstheme',
+              'oslo_config.sphinxconfiggen',
+              'oslo_config.sphinxext',
+              'oslo_policy.sphinxpolicygen',
+              'oslo_policy.sphinxext']
 
+# openstackdocstheme options
+repository_name = 'openstack/designate'
+bug_project = 'designate'
+bug_tag = ''
+html_last_updated_fmt = '%Y-%m-%d %H:%M'
+
+config_generator_config_file = '../../etc/designate/designate-config-generator.conf'
+sample_config_basename = '_static/designate'
+
+policy_generator_config_file = '../../etc/designate/designate-policy-generator.conf'
+sample_policy_basename = '_static/designate'
+
+blockdiag_antialias = True
+blockdiag_html_image_format = "SVG"
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 
@@ -98,7 +118,7 @@ modindex_common_prefix = ["designate."]
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
-html_theme = 'default'
+html_theme = 'openstackdocs'
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the

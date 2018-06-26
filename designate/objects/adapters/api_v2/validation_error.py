@@ -13,11 +13,8 @@
 #    under the License.
 import re
 
-from oslo_log import log as logging
-
 from designate.objects.adapters.api_v2 import base
 from designate import objects
-LOG = logging.getLogger(__name__)
 
 
 class NotSpecifiedSential:
@@ -93,14 +90,26 @@ class ValidationErrorAPIv2Adapter(base.APIv2Adapter):
                 'fields', {}).items():
 
             # Check if this field as actually a nested object
-            if object.FIELDS.get(path_segment, {}).get('relation', False):
-
+            field = object.FIELDS.get(path_segment, {})
+            if isinstance(field, dict) and field.get('relation'):
                 obj_cls = object.FIELDS.get(path_segment).get('relation_cls')
                 obj_adapter = cls.get_object_adapter(
                     cls.ADAPTER_FORMAT,
                     obj_cls)
 
                 object = objects.DesignateObject.obj_cls_from_name(obj_cls)()
+                # Recurse down into this object
+                path_segment, obj_adapter = cls._rename_path_segment(
+                    obj_adapter, object, path_segment)
+
+                # No need to continue the loop
+                break
+            elif hasattr(field, 'objname'):
+                obj_cls = field.objname
+                obj_adapter = cls.get_object_adapter(
+                    cls.ADAPTER_FORMAT, obj_cls)
+
+                object = objects.DesignateObject.obj_cls_from_name(obj_cls)()  # noqa
                 # Recurse down into this object
                 path_segment, obj_adapter = cls._rename_path_segment(
                     obj_adapter, object, path_segment)

@@ -17,16 +17,12 @@ import mock
 from mock import patch
 from oslo_config import cfg
 import oslo_messaging as messaging
-from oslo_log import log as logging
 
 from designate import exceptions
 from designate import objects
 from designate.central import service as central_service
 from designate.mdns import rpcapi as mdns_api
 from designate.tests.test_api.test_v2 import ApiV2TestCase
-
-
-LOG = logging.getLogger(__name__)
 
 
 class ApiV2ZonesTest(ApiV2TestCase):
@@ -523,9 +519,14 @@ class ApiV2ZonesTest(ApiV2TestCase):
 
     def test_update_secondary(self):
         # Create a zone
-        fixture = self.get_zone_fixture('SECONDARY', 0)
-
-        zone = objects.Zone(**fixture)
+        zone = objects.Zone(
+            name='example.com.',
+            type='SECONDARY',
+            masters=objects.ZoneMasterList.from_list([
+                {'host': '1.0.0.0', 'port': 69},
+                {'host': '2.0.0.0', 'port': 69}
+            ])
+        )
         zone.email = cfg.CONF['service:central'].managed_resource_email
 
         # Create a zone
@@ -577,7 +578,7 @@ class ApiV2ZonesTest(ApiV2TestCase):
         # Check the headers are what we expect
         self.assertEqual(202, response.status_int)
         self.assertEqual('application/json', response.content_type)
-        self.assertEqual('""', response.body)
+        self.assertEqual(b'""', response.body)
 
     def test_invalid_xfr_request(self):
         # Create a zone

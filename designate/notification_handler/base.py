@@ -19,14 +19,14 @@ import abc
 from oslo_config import cfg
 from oslo_log import log as logging
 
+import re
+
 from designate import exceptions
 from designate.central import rpcapi as central_rpcapi
 from designate.context import DesignateContext
-from designate.i18n import _LW
 from designate.objects import Record
 from designate.objects import RecordSet
 from designate.plugin import ExtensionPlugin
-
 
 LOG = logging.getLogger(__name__)
 
@@ -90,6 +90,9 @@ class NotificationHandler(ExtensionPlugin):
 
 
 class BaseAddressHandler(NotificationHandler):
+    default_formatv4 = ('%(hostname)s.%(domain)s',)
+    default_formatv6 = ('%(hostname)s.%(domain)s',)
+
     def _get_ip_data(self, addr_dict):
         ip = addr_dict['address']
         version = addr_dict['version']
@@ -98,31 +101,48 @@ class BaseAddressHandler(NotificationHandler):
             'ip_version': version,
         }
 
-        # TODO(endre): Add v6 support
         if version == 4:
             data['ip_address'] = ip.replace('.', '-')
             ip_data = ip.split(".")
             for i in [0, 1, 2, 3]:
                 data["octet%s" % i] = ip_data[i]
+        if version == 6:
+            data['ip_address'] = ip.replace(':', '-')
+            ip_data = re.split('::|:', ip)
+            for i in range(len(ip_data)):
+                data["octet%s" % i] = ip_data[i]
         return data
+
+    def _get_formatv4(self):
+        return (
+            cfg.CONF[self.name].get('formatv4') or
+            self.default_formatv4
+        )
+
+    def _get_formatv6(self):
+        return (
+            cfg.CONF[self.name].get('formatv6') or
+            self.default_formatv6
+        )
 
     def _create(self, addresses, extra, zone_id, managed=True,
                 resource_type=None, resource_id=None):
         """
-        Create a a record from addresses
+        Create a record from addresses
 
         :param addresses: Address objects like
                           {'version': 4, 'ip': '10.0.0.1'}
         :param extra: Extra data to use when formatting the record
+        :param zone_id: The ID of the designate zone.
         :param managed: Is it a managed resource
         :param resource_type: The managed resource type
         :param resource_id: The managed resource ID
         """
         if not managed:
-            LOG.warning(_LW(
+            LOG.warning(
                 'Deprecation notice: Unmanaged designate-sink records are '
                 'being deprecated please update the call '
-                'to remove managed=False'))
+                'to remove managed=False')
         LOG.debug('Using Zone ID: %s', zone_id)
         zone = self.get_zone(zone_id)
         LOG.debug('Domain: %r', zone)
@@ -139,7 +159,12 @@ class BaseAddressHandler(NotificationHandler):
             event_data = data.copy()
             event_data.update(self._get_ip_data(addr))
 
-            for fmt in cfg.CONF[self.name].get('format'):
+            if addr['version'] == 4:
+                format = self._get_formatv4()
+            else:
+                format = self._get_formatv6()
+
+            for fmt in format:
                 recordset_values = {
                     'zone_id': zone['id'],
                     'name': fmt % event_data,
@@ -171,13 +196,17 @@ class BaseAddressHandler(NotificationHandler):
         """
         Handle a generic delete of a fixed ip within a zone
 
+        :param zone_id: The ID of the designate zone.
+        :param managed: Is it a managed resource
+        :param resource_id: The managed resource ID
+        :param resource_type: The managed resource type
         :param criterion: Criterion to search and destroy records
         """
         if not managed:
-            LOG.warning(_LW(
+            LOG.warning(
                 'Deprecation notice: Unmanaged designate-sink records are '
                 'being deprecated please update the call '
-                'to remove managed=False'))
+                'to remove managed=False')
         criterion = criterion or {}
 
         context = DesignateContext().elevated()

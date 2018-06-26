@@ -35,7 +35,7 @@ class DjbdnsAgentBackendUnitTestCase(TestCase):
 
     def setUp(self):
         super(DjbdnsAgentBackendUnitTestCase, self).setUp()
-        self.CONF.set_override('masters', ('127.0.0.1:5354',), 'service:agent')
+        self.CONF.set_override('masters', ['127.0.0.1:5354'], 'service:agent')
         self.useFixture(fixtures.MockPatchObject(
             DjbdnsBackend, '_check_dirs'
         ))
@@ -81,7 +81,7 @@ class DjbdnsAgentBackendUnitTestCase(TestCase):
         self.backend._resolver.query.side_effect = RuntimeError('foo')
 
         serial = self.backend.find_zone_serial('example.com')
-        self.assertEqual(None, serial)
+        self.assertIsNone(serial)
 
     @mock.patch('designate.backend.agent_backend.impl_djbdns.execute')
     def test_create_zone(self, mock_exe):

@@ -37,6 +37,10 @@ from designate.tests import fixtures
 from designate.tests import resources
 from designate.manage import database as manage_database
 
+import eventlet
+
+eventlet.monkey_patch(os=False)
+
 
 LOG = logging.getLogger(__name__)
 
@@ -51,6 +55,10 @@ cfg.CONF.import_opt('cache_driver', 'designate.pool_manager',
 cfg.CONF.import_opt('connection',
                     'designate.pool_manager.cache.impl_sqlalchemy',
                     group='pool_manager_cache:sqlalchemy')
+cfg.CONF.import_opt('emitter_type', 'designate.service_status',
+                    group="heartbeat_emitter")
+cfg.CONF.import_opt('scheduler_filters', 'designate.scheduler',
+                    group="service:central")
 default_pool_id = cfg.CONF['service:central'].default_pool_id
 
 _TRUE_VALUES = ('true', '1', 'yes', 'y')
@@ -65,6 +73,13 @@ class TestCase(base.BaseTestCase):
     service_status_fixtures = [{
         'service_name': 'foo',
         'hostname': 'bar',
+        'status': "UP",
+        'stats': {},
+        'capabilities': {},
+    }, {
+        'id': 'c326f735-eecc-4968-969f-355a43c4ae27',
+        'service_name': 'baz',
+        'hostname': 'qux',
         'status': "UP",
         'stats': {},
         'capabilities': {},
@@ -315,11 +330,11 @@ class TestCase(base.BaseTestCase):
         self.CONF = self.useFixture(cfg_fixture.Config(cfg.CONF)).conf
 
         self.messaging_conf = messaging_fixture.ConfFixture(cfg.CONF)
-        self.messaging_conf.transport_driver = 'fake'
+        self.messaging_conf.transport_url = 'fake:/'
         self.messaging_conf.response_timeout = 5
         self.useFixture(self.messaging_conf)
 
-        self.config(notification_driver='test')
+        self.config(notification_driver=['test'])
 
         self.useFixture(fixtures.RPCFixture(cfg.CONF))
 
@@ -414,7 +429,7 @@ class TestCase(base.BaseTestCase):
 
         # Fill out the necessary pool details
         pool.ns_records = objects.PoolNsRecordList.from_list([
-            {'hostname': 'ns1.example.org.', 'priority': 0}
+            {'hostname': 'ns1.example.org.', 'priority': 1}
         ])
 
         pool.targets = objects.PoolTargetList.from_list([

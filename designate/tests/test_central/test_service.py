@@ -26,11 +26,13 @@ from testtools.matchers import GreaterThan
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_db import exception as db_exception
+from oslo_versionedobjects import exception as ovo_exc
 from oslo_messaging.notify import notifier
 
 from designate import exceptions
 from designate import objects
 from designate.mdns import rpcapi as mdns_api
+from designate.tests import fixtures
 from designate.tests.test_central import CentralTestCase
 from designate.storage.impl_sqlalchemy import tables
 
@@ -38,21 +40,14 @@ LOG = logging.getLogger(__name__)
 
 
 class CentralServiceTest(CentralTestCase):
+    def setUp(self):
+        super(CentralServiceTest, self).setUp()
+        self.stdlog = fixtures.StandardLogging()
+        self.useFixture(self.stdlog)
+
     def test_stop(self):
         # Test stopping the service
         self.central_service.stop()
-
-    def test_start_with_tlds(self):
-        # Stop Service
-        self.central_service.stop()
-
-        list = objects.TldList()
-        list.append(objects.Tld(name='com.'))
-
-        with mock.patch.object(self.central_service.storage, 'find_tlds',
-                return_value=list):
-            self.central_service.start()
-            self.assertTrue(self.central_service.check_for_tlds)
 
     def test_is_valid_zone_name(self):
         self.config(max_zone_name_len=10,
@@ -309,10 +304,10 @@ class CentralServiceTest(CentralTestCase):
 
     def test_update_tld(self):
         # Create a tld
-        tld = self.create_tld(name='org.')
+        tld = self.create_tld(name='org')
 
         # Update the Object
-        tld.name = 'net.'
+        tld.name = 'net'
 
         # Perform the update
         self.central_service.update_tld(self.admin_context, tld)
@@ -321,7 +316,7 @@ class CentralServiceTest(CentralTestCase):
         tld = self.central_service.get_tld(self.admin_context, tld.id)
 
         # Ensure the tld was updated correctly
-        self.assertEqual('net.', tld.name)
+        self.assertEqual('net', tld.name)
 
     def test_delete_tld(self):
         # Create a tld
@@ -706,16 +701,29 @@ class CentralServiceTest(CentralTestCase):
         values = self.get_zone_fixture(fixture=1)
         values['ttl'] = 0
 
-        with testtools.ExpectedException(exceptions.InvalidTTL):
+        with testtools.ExpectedException(ValueError):
                     self.central_service.create_zone(
                         context, objects.Zone.from_dict(values))
+
+    def test_create_zone_below_zero_ttl(self):
+        self.policy({'use_low_ttl': '!'})
+        self.config(min_ttl=1,
+                    group='service:central')
+        context = self.get_context()
+
+        values = self.get_zone_fixture(fixture=1)
+        values['ttl'] = -100
+
+        with testtools.ExpectedException(ValueError):
+            self.central_service.create_zone(
+                context, objects.Zone.from_dict(values))
 
     def test_create_zone_no_min_ttl(self):
         self.policy({'use_low_ttl': '!'})
         self.config(min_ttl=None,
                     group='service:central')
         values = self.get_zone_fixture(fixture=1)
-        values['ttl'] = -100
+        values['ttl'] = 10
 
         # Create zone with random TTL
         zone = self.central_service.create_zone(
@@ -1800,14 +1808,8 @@ class CentralServiceTest(CentralTestCase):
         # Create a recordset
         recordset = self.create_recordset(zone)
 
-        # Update the recordset
-        recordset.ttl = 1800
-        recordset.zone_id = other_zone.id
-
-        # Ensure we get a BadRequest if we change the zone_id
-        with testtools.ExpectedException(exceptions.BadRequest):
-            self.central_service.update_recordset(
-                self.admin_context, recordset)
+        self.assertRaises(ovo_exc.ReadOnlyFieldError, setattr,
+                          recordset, 'zone_id', other_zone.id)
 
     def test_update_recordset_immutable_tenant_id(self):
         zone = self.create_zone()
@@ -1815,30 +1817,19 @@ class CentralServiceTest(CentralTestCase):
         # Create a recordset
         recordset = self.create_recordset(zone)
 
-        # Update the recordset
-        recordset.ttl = 1800
-        recordset.tenant_id = 'other-tenant'
-
-        # Ensure we get a BadRequest if we change the zone_id
-        with testtools.ExpectedException(exceptions.BadRequest):
-            self.central_service.update_recordset(
-                self.admin_context, recordset)
+        self.assertRaises(ovo_exc.ReadOnlyFieldError, setattr,
+                          recordset, 'tenant_id', 'other-tenant')
 
     def test_update_recordset_immutable_type(self):
         zone = self.create_zone()
-
+        # ['A', 'AAAA', 'CNAME', 'MX', 'SRV', 'TXT', 'SPF', 'NS', 'PTR',
+        #  'SSHFP', 'SOA']
         # Create a recordset
         recordset = self.create_recordset(zone)
         cname_recordset = self.create_recordset(zone, type='CNAME')
 
-        # Update the recordset
-        recordset.ttl = 1800
-        recordset.type = cname_recordset.type
-
-        # Ensure we get a BadRequest if we change the zone_id
-        with testtools.ExpectedException(exceptions.BadRequest):
-            self.central_service.update_recordset(
-                self.admin_context, recordset)
+        self.assertRaises(ovo_exc.ReadOnlyFieldError, setattr,
+                          recordset, 'type', cname_recordset.type)
 
     def test_delete_recordset(self):
         zone = self.create_zone()
@@ -2324,6 +2315,20 @@ class CentralServiceTest(CentralTestCase):
         self.assertEqual(fip['address'], fip_ptr['address'])
         self.assertIsNone(fip_ptr['ptrdname'])
 
+    def test_get_floatingip_dual_no_record(self):
+        context = self.get_context(tenant='a')
+
+        self.network_api.fake.allocate_floatingip(context.tenant)
+        fip = self.network_api.fake.allocate_floatingip(context.tenant)
+
+        fip_ptr = self.central_service.get_floatingip(
+            context, fip['region'], fip['id'])
+
+        self.assertEqual(fip['region'], fip_ptr['region'])
+        self.assertEqual(fip['id'], fip_ptr['id'])
+        self.assertEqual(fip['address'], fip_ptr['address'])
+        self.assertIsNone(fip_ptr['ptrdname'])
+
     def test_get_floatingip_with_record(self):
         context = self.get_context(tenant='a')
 
@@ -2546,7 +2551,7 @@ class CentralServiceTest(CentralTestCase):
 
         fixture = self.get_ptr_fixture()
 
-        # Test that re-setting as tenant a an already set floatingip leaves
+        # Test that re-setting as tenant 'a' an already set floatingip leaves
         # only 1 record
         fip = self.network_api.fake.allocate_floatingip(context_a.tenant)
 
@@ -3119,6 +3124,48 @@ class CentralServiceTest(CentralTestCase):
             self.admin_context, zone['id']).serial
 
         self.assertEqual(zone_serial, new_zone_serial)
+
+    def test_create_new_service_status_entry(self):
+        values = self.get_service_status_fixture()
+
+        service_status = self.central_service.update_service_status(
+            self.admin_context, objects.ServiceStatus.from_dict(values))
+
+        self.assertIn("Creating new service status entry for foo at bar",
+                      self.stdlog.logger.output)
+
+        # Make sure this was never updated.
+        self.assertIsNone(service_status.updated_at)
+
+    def test_update_existing_service_status_entry(self):
+        values = self.get_service_status_fixture()
+
+        new_service_status = objects.ServiceStatus.from_dict(values)
+        self.storage.create_service_status(
+            self.admin_context, new_service_status)
+
+        service_status = self.central_service.update_service_status(
+            self.admin_context, objects.ServiceStatus.from_dict(values))
+
+        self.assertEqual(new_service_status.id, service_status.id)
+
+        # Make sure the entry was updated.
+        self.assertIsNotNone(service_status.updated_at)
+
+    def test_update_existing_service_status_entry_with_id_provided(self):
+        values = self.get_service_status_fixture(fixture=1)
+
+        self.storage.create_service_status(
+            self.admin_context, objects.ServiceStatus.from_dict(values))
+
+        service_status = self.central_service.update_service_status(
+            self.admin_context, objects.ServiceStatus.from_dict(values))
+
+        self.assertEqual('c326f735-eecc-4968-969f-355a43c4ae27',
+                         service_status.id)
+
+        # Make sure the entry was updated.
+        self.assertIsNotNone(service_status.updated_at)
 
     def test_create_zone_transfer_request(self):
         zone = self.create_zone()

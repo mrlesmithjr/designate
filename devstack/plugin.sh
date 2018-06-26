@@ -20,10 +20,6 @@ function setup_colorized_logging_designate {
     local user_var=${4:-"user_name"}
 
     setup_colorized_logging $conf_file $conf_section $project_var $user_var
-
-    # Override the logging_context_format_string value chosen by
-    # setup_colorized_logging.
-    iniset $conf_file $conf_section logging_context_format_string "%(asctime)s.%(msecs)03d %(color)s%(levelname)s %(name)s [[01;36m%(request_id)s [00;36m%(user_identity)s%(color)s] [01;35m%(instance)s%(color)s%(message)s[00m"
 }
 
 # DevStack Plugin
@@ -68,33 +64,37 @@ function configure_designate {
         iniset $DESIGNATE_CONF coordination backend_url $DESIGNATE_COORDINATION_URL
     fi
 
-    # Install the policy file for the API server
-    cp $DESIGNATE_DIR/etc/designate/policy.json $DESIGNATE_CONF_DIR/policy.json
-    iniset $DESIGNATE_CONF DEFAULT policy_file $DESIGNATE_CONF_DIR/policy.json
+    if is_service_enabled designate-pool-manager; then
+        # Pool Manager Configuration
+        iniset $DESIGNATE_CONF service:pool_manager pool_id $DESIGNATE_POOL_ID
+        iniset $DESIGNATE_CONF service:pool_manager cache_driver $DESIGNATE_POOL_MANAGER_CACHE_DRIVER
+        iniset $DESIGNATE_CONF service:pool_manager periodic_recovery_interval $DESIGNATE_PERIODIC_RECOVERY_INTERVAL
+        iniset $DESIGNATE_CONF service:pool_manager periodic_sync_interval $DESIGNATE_PERIODIC_SYNC_INTERVAL
 
-    # Pool Manager Configuration
-    iniset $DESIGNATE_CONF service:pool_manager pool_id $DESIGNATE_POOL_ID
-    iniset $DESIGNATE_CONF service:pool_manager cache_driver $DESIGNATE_POOL_MANAGER_CACHE_DRIVER
-    iniset $DESIGNATE_CONF service:pool_manager periodic_recovery_interval $DESIGNATE_PERIODIC_RECOVERY_INTERVAL
-    iniset $DESIGNATE_CONF service:pool_manager periodic_sync_interval $DESIGNATE_PERIODIC_SYNC_INTERVAL
-
-    # Pool Manager Cache
-    if [ "$DESIGNATE_POOL_MANAGER_CACHE_DRIVER" == "sqlalchemy" ]; then
-        iniset $DESIGNATE_CONF pool_manager_cache:sqlalchemy connection `database_connection_url designate_pool_manager`
+        # Pool Manager Cache
+        if [ "$DESIGNATE_POOL_MANAGER_CACHE_DRIVER" == "sqlalchemy" ]; then
+            iniset $DESIGNATE_CONF pool_manager_cache:sqlalchemy connection `database_connection_url designate_pool_manager`
+        fi
     fi
 
     # API Configuration
     sudo cp $DESIGNATE_DIR/etc/designate/api-paste.ini $DESIGNATE_APIPASTE_CONF
-    iniset $DESIGNATE_CONF service:api enabled_extensions_v1 $DESIGNATE_ENABLED_EXTENSIONS_V1
     iniset $DESIGNATE_CONF service:api enabled_extensions_v2 $DESIGNATE_ENABLED_EXTENSIONS_V2
     iniset $DESIGNATE_CONF service:api enabled_extensions_admin $DESIGNATE_ENABLED_EXTENSIONS_ADMIN
     iniset $DESIGNATE_CONF service:api api_base_uri $DESIGNATE_SERVICE_PROTOCOL://$DESIGNATE_SERVICE_HOST:$DESIGNATE_SERVICE_PORT/
-    iniset $DESIGNATE_CONF service:api enable_api_v1 $DESIGNATE_ENABLE_API_V1
     iniset $DESIGNATE_CONF service:api enable_api_v2 $DESIGNATE_ENABLE_API_V2
     iniset $DESIGNATE_CONF service:api enable_api_admin $DESIGNATE_ENABLE_API_ADMIN
 
     # mDNS Configuration
     iniset $DESIGNATE_CONF service:mdns listen ${DESIGNATE_SERVICE_HOST}:${DESIGNATE_SERVICE_PORT_MDNS}
+
+    # Worker Configuration
+    if ! is_service_enabled designate-pool-manager; then
+        iniset $DESIGNATE_CONF service:worker enabled True
+        iniset $DESIGNATE_CONF service:worker notify True
+        iniset $DESIGNATE_CONF service:worker poll_max_retries $DESIGNATE_POLL_RETRIES
+        iniset $DESIGNATE_CONF service:worker poll_retry_interval $DESIGNATE_POLL_INTERVAL
+    fi
 
     # Set up Notifications/Ceilometer Integration
     iniset $DESIGNATE_CONF DEFAULT notification_driver "$DESIGNATE_NOTIFICATION_DRIVER"
@@ -124,18 +124,18 @@ function configure_designate {
     fi
 
     # Setup the Keystone Integration
-    if is_service_enabled key; then
+    if is_service_enabled keystone; then
         iniset $DESIGNATE_CONF service:api auth_strategy keystone
         configure_auth_token_middleware $DESIGNATE_CONF designate $DESIGNATE_AUTH_CACHE_DIR
     fi
 
     # Logging Configuration
-    if [ "$SYSLOG" != "False" ]; then
-        iniset $DESIGNATE_CONF DEFAULT use_syslog True
+    if [ "$USE_SYSTEMD" != "False" ]; then
+        setup_systemd_logging $DESIGNATE_CONF
     fi
 
     # Format logging
-    if [ "$LOG_COLOR" == "True" ] && [ "$SYSLOG" == "False" ]; then
+    if [ "$LOG_COLOR" == "True" ] && [ "$USE_SYSTEMD" == "False" ]; then
         setup_colorized_logging_designate $DESIGNATE_CONF DEFAULT "tenant" "user"
     fi
 
@@ -157,7 +157,6 @@ function configure_designate_tempest() {
         iniset $TEMPEST_CONFIG service_available designate True
 
         # Tell tempest which APIs are available
-        iniset $TEMPEST_CONFIG dns_feature_enabled api_v1 $DESIGNATE_ENABLE_API_V1
         iniset $TEMPEST_CONFIG dns_feature_enabled api_v2 $DESIGNATE_ENABLE_API_V2
         iniset $TEMPEST_CONFIG dns_feature_enabled api_admin $DESIGNATE_ENABLE_API_ADMIN
         iniset $TEMPEST_CONFIG dns_feature_enabled api_v2_root_recordsets True
@@ -199,14 +198,10 @@ function create_designate_accounts {
     if is_service_enabled designate-api; then
         create_service_user "designate"
 
-        if [[ "$KEYSTONE_CATALOG_BACKEND" = 'sql' ]]; then
-            get_or_create_service "designate" "dns" "Designate DNS Service"
-            get_or_create_endpoint "dns" \
-                "$REGION_NAME" \
-                "$DESIGNATE_SERVICE_PROTOCOL://$DESIGNATE_SERVICE_HOST:$DESIGNATE_SERVICE_PORT/" \
-                "$DESIGNATE_SERVICE_PROTOCOL://$DESIGNATE_SERVICE_HOST:$DESIGNATE_SERVICE_PORT/" \
-                "$DESIGNATE_SERVICE_PROTOCOL://$DESIGNATE_SERVICE_HOST:$DESIGNATE_SERVICE_PORT/"
-        fi
+        get_or_create_service "designate" "dns" "Designate DNS Service"
+        get_or_create_endpoint "dns" \
+            "$REGION_NAME" \
+            "$DESIGNATE_SERVICE_PROTOCOL://$DESIGNATE_SERVICE_HOST:$DESIGNATE_SERVICE_PORT/"
     fi
 }
 
@@ -279,8 +274,12 @@ function install_designatedashboard {
     git_clone_by_name "designate-dashboard"
     setup_dev_lib "designate-dashboard"
 
-    ln -fs $DESIGNATEDASHBOARD_DIR/designatedashboard/enabled/_1710_project_dns_panel_group.py $HORIZON_DIR/openstack_dashboard/local/enabled/_1710_project_dns_panel_group.py
-    ln -fs $DESIGNATEDASHBOARD_DIR/designatedashboard/enabled/_1720_project_dns_panel.py $HORIZON_DIR/openstack_dashboard/local/enabled/_1720_project_dns_panel.py
+    for panel in _1710_project_dns_panel_group.py \
+                 _1720_project_dns_panel.py \
+                 _1721_dns_zones_panel.py \
+                 _1722_dns_reversedns_panel.py; do
+        ln -fs $DESIGNATEDASHBOARD_DIR/designatedashboard/enabled/$panel $HORIZON_DIR/openstack_dashboard/local/enabled/$panel
+    done
 }
 
 # install_designatetempest - Collect source and prepare
@@ -289,21 +288,28 @@ function install_designatetempest {
     setup_dev_lib "designate-tempest-plugin"
 }
 
-# start_designate - Start running processes, including screen
+# start_designate - Start running processes
 function start_designate {
     start_designate_backend
 
     run_process designate-central "$DESIGNATE_BIN_DIR/designate-central --config-file $DESIGNATE_CONF"
     run_process designate-api "$DESIGNATE_BIN_DIR/designate-api --config-file $DESIGNATE_CONF"
-    run_process designate-pool-manager "$DESIGNATE_BIN_DIR/designate-pool-manager --config-file $DESIGNATE_CONF"
-    run_process designate-zone-manager "$DESIGNATE_BIN_DIR/designate-zone-manager --config-file $DESIGNATE_CONF"
     run_process designate-mdns "$DESIGNATE_BIN_DIR/designate-mdns --config-file $DESIGNATE_CONF"
     run_process designate-agent "$DESIGNATE_BIN_DIR/designate-agent --config-file $DESIGNATE_CONF"
     run_process designate-sink "$DESIGNATE_BIN_DIR/designate-sink --config-file $DESIGNATE_CONF"
+    if is_service_enabled designate-pool-manager; then
+        run_process designate-pool-manager "$DESIGNATE_BIN_DIR/designate-pool-manager --config-file $DESIGNATE_CONF"
+        run_process designate-zone-manager "$DESIGNATE_BIN_DIR/designate-zone-manager --config-file $DESIGNATE_CONF"
+    else
+        run_process designate-worker "$DESIGNATE_BIN_DIR/designate-worker --config-file $DESIGNATE_CONF"
+        run_process designate-producer "$DESIGNATE_BIN_DIR/designate-producer --config-file $DESIGNATE_CONF"
+    fi
+
+
 
     # Start proxies if enabled
     if is_service_enabled designate-api && is_service_enabled tls-proxy; then
-        start_tls_proxy '*' $DESIGNATE_SERVICE_PORT $DESIGNATE_SERVICE_HOST $DESIGNATE_SERVICE_PORT_INT &
+        start_tls_proxy designate-api '*' $DESIGNATE_SERVICE_PORT $DESIGNATE_SERVICE_HOST $DESIGNATE_SERVICE_PORT_INT &
     fi
 
     if ! timeout $SERVICE_TIMEOUT sh -c "while ! wget --no-proxy -q -O- $DESIGNATE_SERVICE_PROTOCOL://$DESIGNATE_SERVICE_HOST:$DESIGNATE_SERVICE_PORT; do sleep 1; done"; then
@@ -313,7 +319,6 @@ function start_designate {
 
 # stop_designate - Stop running processes
 function stop_designate {
-    # Kill the designate screen windows
     stop_process designate-central
     stop_process designate-api
     stop_process designate-pool-manager
@@ -321,6 +326,8 @@ function stop_designate {
     stop_process designate-mdns
     stop_process designate-agent
     stop_process designate-sink
+    stop_process designate-worker
+    stop_process designate-producer
 
     stop_designate_backend
 }
@@ -358,7 +365,7 @@ if is_service_enabled designate; then
             configure_designatedashboard
         fi
 
-        if is_service_enabled key; then
+        if is_service_enabled keystone; then
             echo_summary "Creating Designate Keystone accounts"
             create_designate_accounts
         fi
@@ -367,14 +374,14 @@ if is_service_enabled designate; then
         echo_summary "Initializing Designate"
         init_designate
 
-        echo_summary "Configuring Tempest options for Designate"
-        configure_designate_tempest
-
         echo_summary "Starting Designate"
         start_designate
 
         echo_summary "Creating Pool Configuration"
         create_designate_pool_configuration
+    elif [[ "$1" == "stack" && "$2" == "test-config" ]]; then
+        echo_summary "Configuring Tempest options for Designate"
+        configure_designate_tempest
     fi
 
     if [[ "$1" == "unstack" ]]; then

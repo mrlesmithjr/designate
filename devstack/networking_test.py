@@ -46,6 +46,7 @@ import os
 import random
 import string
 import time
+import sys
 
 import dns
 import dns.resolver
@@ -116,7 +117,7 @@ class DesignateCLI(object):
         """Run a openstack client command using JSON output
 
         :returns: dict
-        :raises: CalledProcessError
+        :raises CalledProcessError:
         """
         cmd = "%s %s -f json" % (openstack_cli, cmd)
         log.debug("  running %s" % cmd)
@@ -236,7 +237,7 @@ COMMIT
 COMMIT
 """
         marks = dict((k, "0x%d/0xffffffff" % v)
-                     for k, v in self.protocol_marks.iteritems())
+                     for k, v in self.protocol_marks.items())
         ipt_conf = ipt_conf % marks
         self._apply_iptables_conf(ipt_conf)
 
@@ -660,4 +661,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

@@ -25,11 +25,25 @@ from oslo_log import log as logging
 from designate.backend.agent_backend import base
 from designate import exceptions
 from designate import utils
-from designate.i18n import _LI
-
 
 LOG = logging.getLogger(__name__)
 CFG_GROUP = 'backend:agent:denominator'
+
+"""GROUP = backend:agent:denominator"""
+denominator_group = cfg.OptGroup(
+            name='backend:agent:denominator',
+            title='Backend options for Denominator',
+        )
+
+denominator_opts = [
+    cfg.StrOpt('name', default='fake',
+               help='Name of the affected provider'),
+    cfg.StrOpt('config_file', default='/etc/denominator.conf',
+               help='Path to Denominator configuration file')
+]
+
+cfg.CONF.register_group(denominator_group)
+cfg.CONF.register_opts(denominator_opts, group=denominator_group)
 
 
 class Denominator(object):
@@ -98,28 +112,16 @@ class DenominatorBackend(base.AgentBackend):
 
     @classmethod
     def get_cfg_opts(cls):
-        group = cfg.OptGroup(
-            name=CFG_GROUP,
-            title='Backend options for Denominator',
-        )
-
-        opts = [
-            cfg.StrOpt('name', default='fake',
-                help='Name of the affected provider'),
-            cfg.StrOpt('config_file', default='/etc/denominator.conf',
-                help='Path to Denominator configuration file')
-        ]
-
-        return [(group, opts)]
+        return [(denominator_group, denominator_opts)]
 
     def start(self):
-        LOG.info(_LI("Started Denominator backend"))
+        LOG.info("Started Denominator backend")
 
     def stop(self):
-        LOG.info(_LI("Stopped Denominator backend"))
+        LOG.info("Stopped Denominator backend")
 
     def find_zone_serial(self, zone_name):
-        LOG.debug("Finding %s" % zone_name)
+        LOG.debug("Finding %s", zone_name)
 
         zone_name = zone_name.rstrip('.')
         output = self.denominator.get_record(
@@ -136,8 +138,8 @@ class DenominatorBackend(base.AgentBackend):
         return rdata.serial
 
     def create_zone(self, zone):
-        LOG.debug("Creating %s" % zone.origin.to_text())
-        zone_name = zone.origin.to_text(omit_final_dot=True)
+        LOG.debug("Creating %s", zone.origin.to_text())
+        zone_name = zone.origin.to_text(omit_final_dot=True).decode('utf-8')
 
         # Use SOA TTL as zone default TTL
         soa_record = zone.find_rrset(zone.origin, dns.rdatatype.SOA)
@@ -155,7 +157,7 @@ class DenominatorBackend(base.AgentBackend):
 
             # Add records one by one.
             for name, ttl, rtype, data in self._iterate_records(zone):
-                # Some providers do not support creationg of SOA record.
+                # Some providers do not support creation of SOA record.
                 rdatatype = dns.rdatatype.from_text(rtype)
                 if rdatatype == dns.rdatatype.SOA:
                     continue
@@ -168,8 +170,8 @@ class DenominatorBackend(base.AgentBackend):
                     data=data)
 
     def update_zone(self, zone):
-        LOG.debug("Updating %s" % zone.origin)
-        zone_name = zone.origin.to_text(omit_final_dot=True)
+        LOG.debug("Updating %s", zone.origin)
+        zone_name = zone.origin.to_text(omit_final_dot=True).decode('utf-8')
 
         soa_record = zone.find_rrset(zone.origin, dns.rdatatype.SOA)
         rname = soa_record.items[0].rname.derelativize(origin=zone.origin)
@@ -237,7 +239,7 @@ class DenominatorBackend(base.AgentBackend):
     def _iterate_records(self, zone):
         for rname, ttl, rdata in zone.iterate_rdatas():
             name = rname.derelativize(origin=zone.origin)
-            name = name.to_text(omit_final_dot=True)
+            name = name.to_text(omit_final_dot=True).decode('utf-8')
 
             data = rdata.to_text(origin=zone.origin, relativize=False)
             yield name, ttl, dns.rdatatype.to_text(rdata.rdtype), data

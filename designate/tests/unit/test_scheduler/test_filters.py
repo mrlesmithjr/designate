@@ -23,6 +23,7 @@ from designate.scheduler.filters import default_pool_filter
 from designate.scheduler.filters import fallback_filter
 from designate.scheduler.filters import pool_id_attribute_filter
 from designate.scheduler.filters import attribute_filter
+from designate.scheduler.filters import in_doubt_default_pool_filter
 from designate import objects
 from designate import context
 from designate import policy
@@ -418,6 +419,40 @@ class SchedulerAttributeFilterTest(SchedulerFilterTest):
 
         pools[0].attributes = pool_0_attributes
 
+        pools = self.test_filter.filter(self.context, pools, self.zone)
+
+        self.assertEqual(0, len(pools))
+
+
+class SchedulerInDoubtDefaultPoolFilterTest(SchedulerFilterTest):
+
+    FILTER = in_doubt_default_pool_filter.InDoubtDefaultPoolFilter
+
+    def test_pools_with_default(self):
+        pools = objects.PoolList.from_list(
+            [
+                {"id": "6c346011-e581-429b-a7a2-6cdf0aba91c3"},
+                {"id": "5fabcd37-262c-4cf3-8625-7f419434b6df"}
+            ]
+        )
+        pools = self.test_filter.filter(self.context, pools, self.zone)
+
+        self.assertEqual(1, len(pools))
+        self.assertEqual(pools[0].id, "6c346011-e581-429b-a7a2-6cdf0aba91c3")
+
+    def test_pools_without_default(self):
+        pools = objects.PoolList.from_list(
+            [
+                {"id": "24702e43-8a52-440f-ab74-19fc16048860"},
+                {"id": "5fabcd37-262c-4cf3-8625-7f419434b6df"}
+            ]
+        )
+        pools = self.test_filter.filter(self.context, pools, self.zone)
+
+        self.assertEqual(2, len(pools))
+
+    def test_no_pools(self):
+        pools = objects.PoolList()
         pools = self.test_filter.filter(self.context, pools, self.zone)
 
         self.assertEqual(0, len(pools))

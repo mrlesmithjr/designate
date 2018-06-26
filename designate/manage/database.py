@@ -43,7 +43,7 @@ def get_manager():
     storage_db = CONF['storage:sqlalchemy'].connection
     pool_manager_cache_db = CONF['pool_manager_cache:sqlalchemy'].connection
     if storage_db == pool_manager_cache_db:
-        raise exception.DbMigrationError(
+        raise exception.DBMigrationError(
             message=(
                 "Storage requires its own database. "
                 "Please check your config file."
@@ -65,7 +65,3 @@ class DatabaseCommands(base.Commands):
     @base.args('revision', nargs='?')
     def upgrade(self, revision):
         get_manager().upgrade(revision)
-
-    @base.args('revision', nargs='?')
-    def downgrade(self, revision):
-        get_manager().downgrade(revision)

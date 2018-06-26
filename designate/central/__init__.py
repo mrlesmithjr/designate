@@ -15,11 +15,11 @@
 # under the License.
 from oslo_config import cfg
 
-cfg.CONF.register_group(cfg.OptGroup(
+central_group = cfg.OptGroup(
     name='service:central', title="Configuration for Central Service"
-))
+)
 
-cfg.CONF.register_opts([
+OPTS = [
     cfg.IntOpt('workers',
                help='Number of central worker processes to spawn'),
     cfg.IntOpt('threads', default=1000,
@@ -43,4 +43,14 @@ cfg.CONF.register_opts([
     cfg.StrOpt('default_pool_id',
                default='794ccc2c-d751-44fe-b57f-8894c9f5c842',
                help="The name of the default pool"),
-], group='service:central')
+    cfg.StrOpt('central_topic',
+               default='central',
+               help="RPC topic name of central service."),
+]
+
+cfg.CONF.register_group(central_group)
+cfg.CONF.register_opts(OPTS, group=central_group)
+
+
+def list_opts():
+    yield central_group, OPTS

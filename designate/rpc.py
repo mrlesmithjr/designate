@@ -23,14 +23,11 @@ __all__ = [
     'get_client',
     'get_server',
     'get_notifier',
-    'TRANSPORT_ALIASES',
 ]
 
-import inspect
 
 from oslo_config import cfg
 import oslo_messaging as messaging
-from oslo_messaging import server as msg_server
 from oslo_messaging.rpc import server as rpc_server
 from oslo_messaging.rpc import dispatcher as rpc_dispatcher
 from oslo_serialization import jsonutils
@@ -43,7 +40,7 @@ from designate import objects
 CONF = cfg.CONF
 TRANSPORT = None
 NOTIFIER = None
-
+NOTIFICATION_TRANSPORT = None
 
 # NOTE: Additional entries to designate.exceptions goes here.
 CONF.register_opts([
@@ -60,37 +57,25 @@ ALLOWED_EXMODS = [
 EXTRA_EXMODS = []
 
 
-# NOTE(flaper87): The designate.openstack.common.rpc entries are
-# for backwards compat with Havana rpc_backend configuration
-# values. The designate.rpc entries are for compat with Folsom values.
-TRANSPORT_ALIASES = {
-    'designate.openstack.common.rpc.impl_kombu': 'rabbit',
-    'designate.openstack.common.rpc.impl_qpid': 'qpid',
-    'designate.openstack.common.rpc.impl_zmq': 'zmq',
-    'designate.rpc.impl_kombu': 'rabbit',
-    'designate.rpc.impl_qpid': 'qpid',
-    'designate.rpc.impl_zmq': 'zmq',
-}
-
-
 def init(conf):
-    global TRANSPORT, NOTIFIER
+    global TRANSPORT, NOTIFIER, NOTIFICATION_TRANSPORT
     exmods = get_allowed_exmods()
-    TRANSPORT = messaging.get_transport(conf,
-                                        allowed_remote_exmods=exmods,
-                                        aliases=TRANSPORT_ALIASES)
-
+    TRANSPORT = create_transport(get_transport_url())
+    NOTIFICATION_TRANSPORT = messaging.get_notification_transport(
+        conf, allowed_remote_exmods=exmods)
     serializer = RequestContextSerializer(JsonPayloadSerializer())
-    NOTIFIER = messaging.Notifier(TRANSPORT, serializer=serializer)
+    NOTIFIER = messaging.Notifier(NOTIFICATION_TRANSPORT,
+                                  serializer=serializer)
 
 
 def initialized():
-    return None not in [TRANSPORT, NOTIFIER]
+    return None not in [TRANSPORT, NOTIFIER, NOTIFICATION_TRANSPORT]
 
 
 def cleanup():
-    global TRANSPORT, NOTIFIER
+    global TRANSPORT, NOTIFIER, NOTIFICATION_TRANSPORT
     assert TRANSPORT is not None
+    assert NOTIFICATION_TRANSPORT is not None
     assert NOTIFIER is not None
     TRANSPORT.cleanup()
     TRANSPORT = NOTIFIER = None
@@ -176,15 +161,6 @@ class RequestContextSerializer(messaging.Serializer):
 
 
 class RPCDispatcher(rpc_dispatcher.RPCDispatcher):
-    def _dispatch(self, *args, **kwds):
-        # TODO(kiall): Remove when oslo.messaging 5 is the min in requirements
-        try:
-            return super(RPCDispatcher, self)._dispatch(*args, **kwds)
-        except Exception as e:
-            if getattr(e, 'expected', False):
-                raise rpc_dispatcher.ExpectedException()
-            else:
-                raise
 
     def dispatch(self, *args, **kwds):
         try:
@@ -197,7 +173,7 @@ class RPCDispatcher(rpc_dispatcher.RPCDispatcher):
 
 
 def get_transport_url(url_str=None):
-    return messaging.TransportURL.parse(CONF, url_str, TRANSPORT_ALIASES)
+    return messaging.TransportURL.parse(CONF, url_str)
 
 
 def get_client(target, version_cap=None, serializer=None):
@@ -216,22 +192,10 @@ def get_server(target, endpoints, serializer=None):
     if serializer is None:
         serializer = DesignateObjectSerializer()
     serializer = RequestContextSerializer(serializer)
-
-    # TODO(kiall): Remove when oslo.messaging 5 is the min in requirements
-    argspec = inspect.getargspec(rpc_dispatcher.RPCDispatcher.__init__)
-    if 'target' in argspec.args:
-        # We're on oslo.messaging < 5
-        dispatcher = RPCDispatcher(target, endpoints, serializer)
-
-        return msg_server.MessageHandlingServer(
-            TRANSPORT, dispatcher, 'eventlet')
-
-    else:
-        # We're on oslo.messaging >= 5
-        dispatcher = RPCDispatcher(endpoints, serializer)
-
-        return rpc_server.RPCServer(
-            TRANSPORT, target, dispatcher, 'eventlet')
+    access_policy = rpc_dispatcher.DefaultRPCAccessPolicy
+    dispatcher = RPCDispatcher(endpoints, serializer, access_policy)
+    return rpc_server.RPCServer(
+        TRANSPORT, target, dispatcher, 'eventlet')
 
 
 def get_listener(targets, endpoints, serializer=None):
@@ -250,3 +214,10 @@ def get_notifier(service=None, host=None, publisher_id=None):
     if not publisher_id:
         publisher_id = "%s.%s" % (service, host or CONF.host)
     return NOTIFIER.prepare(publisher_id=publisher_id)
+
+
+def create_transport(url):
+    exmods = get_allowed_exmods()
+    return messaging.get_rpc_transport(CONF,
+                                       url=url,
+                                       allowed_remote_exmods=exmods)

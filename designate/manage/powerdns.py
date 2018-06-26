@@ -18,14 +18,12 @@ import os
 from migrate.versioning import api as versioning_api
 from oslo_config import cfg
 from oslo_db.sqlalchemy.migration_cli import manager as migration_manager
-from oslo_log import log as logging
 
 from designate.manage import base
 from designate import rpc
 from designate import utils
 from designate.central import rpcapi as central_rpcapi
 
-LOG = logging.getLogger(__name__)
 
 REPOSITORY = os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
                                           'backend', 'impl_powerdns',
@@ -73,11 +71,3 @@ class DatabaseCommands(base.Commands):
 
         for pool_target in pool.targets:
             get_manager(pool_target).upgrade(revision)
-
-    @base.args('pool-id', help="Pool to Migrate", type=str)
-    @base.args('revision', nargs='?')
-    def downgrade(self, pool_id, revision):
-        pool = self.central_api.find_pool(self.context, {"id": pool_id})
-
-        for pool_target in pool.targets:
-            get_manager(pool_target).downgrade(revision)

@@ -29,29 +29,9 @@ from designate import notifications
 from designate import context
 from designate import objects
 from designate.objects.adapters import DesignateAdapter
-from designate.i18n import _LI
-from designate.i18n import _LW
-from designate.i18n import _LE
-from designate.i18n import _LC
 
 
 LOG = logging.getLogger(__name__)
-
-cfg.CONF.register_opts([
-    cfg.BoolOpt('maintenance-mode', default=False,
-                help='Enable API Maintenance Mode'),
-    cfg.StrOpt('maintenance-mode-role', default='admin',
-               help='Role allowed to bypass maintaince mode'),
-    cfg.StrOpt('secure-proxy-ssl-header',
-               default='X-Forwarded-Proto',
-               help="The HTTP Header that will be used to determine which "
-                    "the original request protocol scheme was, even if it was "
-                    "removed by an SSL terminating proxy."),
-    cfg.StrOpt('override-proto',
-               help="A scheme that will be used to override "
-                    "the request protocol scheme, even if it was "
-                    "set by an SSL terminating proxy.")
-], group='service:api')
 
 
 def auth_pipeline_factory(loader, global_conf, **local_conf):
@@ -62,7 +42,7 @@ def auth_pipeline_factory(loader, global_conf, **local_conf):
     """
     pipeline = local_conf[cfg.CONF['service:api'].auth_strategy]
     pipeline = pipeline.split()
-    LOG.info(_LI('Getting auth pipeline: %s'), pipeline[:-1])
+    LOG.info('Getting auth pipeline: %s', pipeline[:-1])
     filters = [loader.get_filter(n) for n in pipeline[:-1]]
     app = loader.get_app(pipeline[-1])
     filters.reverse()
@@ -91,6 +71,12 @@ class ContextMiddleware(base.Middleware):
                 value = request.GET.pop(i)
                 ctxt.all_tenants = strutils.bool_from_string(value)
 
+    def _extract_dns_hide_counts(self, ctxt, request):
+        ctxt.hide_counts = False
+        value = request.headers.get('OpenStack-DNS-Hide-Counts')
+        if value:
+            ctxt.hide_counts = strutils.bool_from_string(value)
+
     def _extract_edit_managed_records(self, ctxt, request):
         ctxt.edit_managed_records = False
         if 'edit_managed_records' in request.GET:
@@ -100,6 +86,10 @@ class ContextMiddleware(base.Middleware):
             ctxt.edit_managed_records = \
                 strutils.bool_from_string(
                     request.headers.get('X-Designate-Edit-Managed-Records'))
+
+    def _extract_client_addr(self, ctxt, request):
+        if hasattr(request, 'client_addr'):
+            ctxt.client_addr = request.client_addr
 
     def make_context(self, request, *args, **kwargs):
         req_id = request.environ.get(request_id.ENV_REQUEST_ID)
@@ -111,6 +101,8 @@ class ContextMiddleware(base.Middleware):
             self._extract_sudo(ctxt, request)
             self._extract_all_projects(ctxt, request)
             self._extract_edit_managed_records(ctxt, request)
+            self._extract_dns_hide_counts(ctxt, request)
+            self._extract_client_addr(ctxt, request)
         finally:
             request.environ['context'] = ctxt
         return ctxt
@@ -120,7 +112,7 @@ class KeystoneContextMiddleware(ContextMiddleware):
     def __init__(self, application):
         super(KeystoneContextMiddleware, self).__init__(application)
 
-        LOG.info(_LI('Starting designate keystonecontext middleware'))
+        LOG.info('Starting designate keystonecontext middleware')
 
     def process_request(self, request):
         headers = request.headers
@@ -160,7 +152,7 @@ class NoAuthContextMiddleware(ContextMiddleware):
     def __init__(self, application):
         super(NoAuthContextMiddleware, self).__init__(application)
 
-        LOG.info(_LI('Starting designate noauthcontext middleware'))
+        LOG.info('Starting designate noauthcontext middleware')
 
     def process_request(self, request):
         headers = request.headers
@@ -178,8 +170,8 @@ class TestContextMiddleware(ContextMiddleware):
     def __init__(self, application, tenant_id=None, user_id=None):
         super(TestContextMiddleware, self).__init__(application)
 
-        LOG.critical(_LC('Starting designate testcontext middleware'))
-        LOG.critical(_LC('**** DO NOT USE IN PRODUCTION ****'))
+        LOG.critical('Starting designate testcontext middleware')
+        LOG.critical('**** DO NOT USE IN PRODUCTION ****')
 
         self.default_tenant_id = tenant_id
         self.default_user_id = user_id
@@ -201,7 +193,7 @@ class MaintenanceMiddleware(base.Middleware):
     def __init__(self, application):
         super(MaintenanceMiddleware, self).__init__(application)
 
-        LOG.info(_LI('Starting designate maintenance middleware'))
+        LOG.info('Starting designate maintenance middleware')
 
         self.enabled = cfg.CONF['service:api'].maintenance_mode
         self.role = cfg.CONF['service:api'].maintenance_mode_role
@@ -215,7 +207,7 @@ class MaintenanceMiddleware(base.Middleware):
         # If the caller has the bypass role, let them through
         if ('context' in request.environ
                 and self.role in request.environ['context'].roles):
-            LOG.warning(_LW('Request authorized to bypass maintenance mode'))
+            LOG.warning('Request authorized to bypass maintenance mode')
             return None
 
         # Otherwise, reject the request with a 503 Service Unavailable
@@ -235,7 +227,7 @@ class FaultWrapperMiddleware(base.Middleware):
     def __init__(self, application):
         super(FaultWrapperMiddleware, self).__init__(application)
 
-        LOG.info(_LI('Starting designate faultwrapper middleware'))
+        LOG.info('Starting designate faultwrapper middleware')
 
     @webob.dec.wsgify
     def __call__(self, request):
@@ -306,21 +298,10 @@ class FaultWrapperMiddleware(base.Middleware):
         else:
             # TODO(ekarlso): Remove after verifying that there's actually a
             # context always set
-            LOG.error(_LE('Missing context in request, please check.'))
+            LOG.error('Missing context in request, please check.')
 
         return flask.Response(status=status, headers=headers,
                               response=json.dumps(response))
-
-
-class FaultWrapperMiddlewareV1(FaultWrapperMiddleware):
-    def _format_error(self, data):
-        replace_map = [
-            ("zone", "domain",)
-        ]
-
-        for i in replace_map:
-            data["type"] = data["type"].replace(i[0], i[1])
-        print(data)
 
 
 class ValidationErrorMiddleware(base.Middleware):
@@ -328,7 +309,7 @@ class ValidationErrorMiddleware(base.Middleware):
     def __init__(self, application):
         super(ValidationErrorMiddleware, self).__init__(application)
 
-        LOG.info(_LI('Starting designate validation middleware'))
+        LOG.info('Starting designate validation middleware')
 
     @webob.dec.wsgify
     def __call__(self, request):
@@ -368,16 +349,10 @@ class ValidationErrorMiddleware(base.Middleware):
         else:
             # TODO(ekarlso): Remove after verifying that there's actually a
             # context always set
-            LOG.error(_LE('Missing context in request, please check.'))
+            LOG.error('Missing context in request, please check.')
 
         return flask.Response(status=exception.error_code, headers=headers,
                               response=json.dumps(response))
-
-
-class APIv1ValidationErrorMiddleware(ValidationErrorMiddleware):
-    def __init__(self, application):
-        super(APIv1ValidationErrorMiddleware, self).__init__(application)
-        self.api_version = 'API_v1'
 
 
 class APIv2ValidationErrorMiddleware(ValidationErrorMiddleware):
@@ -398,7 +373,7 @@ class SSLMiddleware(base.Middleware):
     @removals.remove
     def __init__(self, application):
         super(SSLMiddleware, self).__init__(application)
-        LOG.info(_LI('Starting designate ssl middleware'))
+        LOG.info('Starting designate ssl middleware')
         self.secure_proxy_ssl_header = 'HTTP_{0}'.format(
             cfg.CONF['service:api'].secure_proxy_ssl_header.upper().
             replace('-', '_'))
